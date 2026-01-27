@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Canvas,
   FabricImage,
@@ -19,11 +19,21 @@ declare module "fabric" {
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
 
-const CanvasComponent: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fabricCanvas = useRef<Canvas | null>(null);
-  const isSpaceDownRef = useRef(false);
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
+const CANVAS_W = 1200;
+const CANVAS_H = 800;
+
+const CanvasComponent: React.FC = () => {
+  // ✅ React never renders a <canvas> node (Fabric mutates DOM). We give Fabric a host div.
+  const fabricHostRef = useRef<HTMLDivElement | null>(null);
+  const fabricCanvas = useRef<Canvas | null>(null);
+
+  const isSpaceDownRef = useRef(false);
+  const pdfViewportRef = useRef<{ width: number; height: number } | null>(null);
+
+  // Sidebar icons
   const [images] = useState([
     "/images/ampage.png",
     "/images/bobble-legs.png",
@@ -33,7 +43,24 @@ const CanvasComponent: React.FC = () => {
     "/images/fork2.png",
   ]);
 
-  // --- helpers for toolbar ---
+  // Toolbar show/hide (also driven by sidebar toggle button)
+  const [toolbarVisible, setToolbarVisible] = useState(true);
+
+  // Draggable toolbar
+  const [toolbarPos, setToolbarPos] = useState({ x: 12, y: 12 });
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    originX: 12,
+    originY: 12,
+  });
+
+  // Zoom limits
+  const MIN_ZOOM = 0.05;
+  const MAX_ZOOM = 8;
+
+  // ---- helpers (pan/zoom) ----
   const panBy = useCallback((dx: number, dy: number) => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
@@ -45,23 +72,48 @@ const CanvasComponent: React.FC = () => {
     canvas.requestRenderAll();
   }, []);
 
-  const zoomBy = useCallback((delta: number) => {
+  const zoomTo = useCallback(
+    (z: number) => {
+      const canvas = fabricCanvas.current;
+      if (!canvas) return;
+
+      const next = clamp(z, MIN_ZOOM, MAX_ZOOM);
+      const center = new Point(canvas.getWidth() / 2, canvas.getHeight() / 2);
+      canvas.zoomToPoint(center, next);
+      canvas.requestRenderAll();
+    },
+    [MIN_ZOOM, MAX_ZOOM]
+  );
+
+  const zoomBy = useCallback(
+    (delta: number) => {
+      const canvas = fabricCanvas.current;
+      if (!canvas) return;
+      zoomTo(canvas.getZoom() + delta);
+    },
+    [zoomTo]
+  );
+
+  const fitToPdf = useCallback(() => {
     const canvas = fabricCanvas.current;
-    if (!canvas) return;
+    const pdf = pdfViewportRef.current;
+    if (!canvas || !pdf) return;
 
-    let zoom = canvas.getZoom();
-    zoom = zoom + delta;
+    const padding = 30;
+    const cw = canvas.getWidth() - padding * 2;
+    const ch = canvas.getHeight() - padding * 2;
 
-    if (zoom > 5) zoom = 5;
-    if (zoom < 0.5) zoom = 0.5;
+    const scale = Math.min(cw / pdf.width, ch / pdf.height);
+    const s = clamp(scale, MIN_ZOOM, MAX_ZOOM);
 
-    // zoom around the canvas center
-    const center = new Point(canvas.getWidth() / 2, canvas.getHeight() / 2);
-    canvas.zoomToPoint(center, zoom);
+    const dx = (canvas.getWidth() - pdf.width * s) / 2;
+    const dy = (canvas.getHeight() - pdf.height * s) / 2;
+
+    canvas.setViewportTransform([s, 0, 0, s, dx, dy]);
     canvas.requestRenderAll();
-  }, []);
+  }, [MIN_ZOOM, MAX_ZOOM]);
 
-  // --- keyboard: arrows pan, delete removes selected, space enables pan-anywhere ---
+  // ---- keyboard (delete, arrows pan, space pan override) ----
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space") {
@@ -72,7 +124,7 @@ const CanvasComponent: React.FC = () => {
       const canvas = fabricCanvas.current;
       if (!canvas) return;
 
-      // don’t hijack keys while typing
+      // don't hijack typing
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       const isTyping =
         tag === "input" ||
@@ -80,7 +132,7 @@ const CanvasComponent: React.FC = () => {
         (e.target as any)?.isContentEditable;
       if (isTyping) return;
 
-      // delete selected object
+      // delete selected
       if (e.key === "Delete" || e.key === "Backspace") {
         const active = canvas.getActiveObject();
         if (active) {
@@ -92,8 +144,8 @@ const CanvasComponent: React.FC = () => {
         return;
       }
 
-      // pan with arrows
-      const step = e.shiftKey ? 60 : 25;
+      // arrow pan
+      const step = e.shiftKey ? 80 : 35;
       if (e.key === "ArrowUp") {
         panBy(0, step);
         e.preventDefault();
@@ -121,14 +173,22 @@ const CanvasComponent: React.FC = () => {
     };
   }, [panBy]);
 
-  // --- init fabric canvas + drag/drop ---
+  // ---- init Fabric (React never renders the canvas node) ----
   useEffect(() => {
     if (fabricCanvas.current) return;
-    if (!canvasRef.current) return;
+    if (!fabricHostRef.current) return;
 
-    const canvas = new Canvas(canvasRef.current, {
-      width: 1200,
-      height: 800,
+    const el = document.createElement("canvas");
+    el.width = CANVAS_W;
+    el.height = CANVAS_H;
+    el.style.width = "100%";
+    el.style.height = `${CANVAS_H}px`;
+    el.style.display = "block";
+    fabricHostRef.current.appendChild(el);
+
+    const canvas = new Canvas(el, {
+      width: CANVAS_W,
+      height: CANVAS_H,
       backgroundColor: "#f3f3f3",
       selection: true,
     });
@@ -136,22 +196,25 @@ const CanvasComponent: React.FC = () => {
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
     fabricCanvas.current = canvas;
 
-    // wheel zoom to cursor
-    const handleZoom = (event: any) => {
+    // ✅ remove selection "blue boxes" globally (still selectable/movable)
+    canvas.selectionColor = "rgba(0,0,0,0)";
+    canvas.selectionBorderColor = "rgba(0,0,0,0)";
+    canvas.selectionLineWidth = 0;
+
+    // Wheel zoom (wide range)
+    const handleWheelZoom = (event: any) => {
       const e = event.e as WheelEvent;
       e.preventDefault();
 
       let zoom = canvas.getZoom();
       zoom *= 0.999 ** e.deltaY;
-
-      if (zoom > 5) zoom = 5;
-      if (zoom < 0.5) zoom = 0.5;
+      zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
 
       canvas.zoomToPoint(new Point(e.offsetX, e.offsetY), zoom);
       canvas.requestRenderAll();
     };
 
-    // pan: drag empty space OR Space+drag anywhere
+    // Pan: drag empty space OR Space+drag anywhere
     const handleMouseDown = (event: any) => {
       const clickedObject = !!event.target;
       const allowPan = !clickedObject || isSpaceDownRef.current;
@@ -174,7 +237,6 @@ const CanvasComponent: React.FC = () => {
       vpt[5] += e.clientY - (canvas.lastPosY ?? e.clientY);
       canvas.lastPosX = e.clientX;
       canvas.lastPosY = e.clientY;
-
       canvas.requestRenderAll();
     };
 
@@ -184,25 +246,12 @@ const CanvasComponent: React.FC = () => {
       canvas.defaultCursor = "default";
     };
 
-    // shift+click rotate image
-    const handleRotateOnShiftClick = (event: any) => {
-      const e = event.e as MouseEvent;
-      if (!e.shiftKey) return;
-
-      const target = event.target as any;
-      if (!target || target.type !== "image") return;
-
-      target.rotate(((target.angle ?? 0) + 90) % 360);
-      canvas.requestRenderAll();
-    };
-
-    canvas.on("mouse:wheel", handleZoom);
+    canvas.on("mouse:wheel", handleWheelZoom);
     canvas.on("mouse:down", handleMouseDown);
     canvas.on("mouse:move", handleMouseMove);
     canvas.on("mouse:up", handleMouseUp);
-    canvas.on("mouse:down", handleRotateOnShiftClick);
 
-    // drag/drop must be on Fabric upper canvas
+    // Drag/drop on upper canvas
     const upper = canvas.upperCanvasEl;
 
     const onDragOver = (e: DragEvent) => {
@@ -227,8 +276,8 @@ const CanvasComponent: React.FC = () => {
 
       const img = await FabricImage.fromURL(src, { crossOrigin: "anonymous" });
 
-      // ✅ icon size (change here)
-      const TARGET_WIDTH = 30;
+      // ✅ icon size
+      const TARGET_WIDTH = 30; // change this anytime
       const scale = TARGET_WIDTH / (img.width || 1);
       img.scale(scale);
 
@@ -237,6 +286,10 @@ const CanvasComponent: React.FC = () => {
         top: world.y,
         selectable: true,
         evented: true,
+
+        // ✅ remove blue selection border/handles for icons
+        hasBorders: false,
+        hasControls: false,
       });
 
       canvas.add(img);
@@ -251,18 +304,18 @@ const CanvasComponent: React.FC = () => {
       upper.removeEventListener("dragover", onDragOver);
       upper.removeEventListener("drop", onDrop);
 
-      canvas.off("mouse:wheel", handleZoom);
+      canvas.off("mouse:wheel", handleWheelZoom);
       canvas.off("mouse:down", handleMouseDown);
       canvas.off("mouse:move", handleMouseMove);
       canvas.off("mouse:up", handleMouseUp);
-      canvas.off("mouse:down", handleRotateOnShiftClick);
 
       canvas.dispose();
       fabricCanvas.current = null;
+      el.remove();
     };
-  }, []);
+  }, [MIN_ZOOM, MAX_ZOOM]);
 
-  // --- PDF upload ---
+  // ---- PDF upload ----
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
@@ -279,6 +332,7 @@ const CanvasComponent: React.FC = () => {
       const page = await pdfDoc.getPage(1);
 
       const viewport = page.getViewport({ scale: 1 });
+      pdfViewportRef.current = { width: viewport.width, height: viewport.height };
 
       const pdfCanvas = document.createElement("canvas");
       const ctx = pdfCanvas.getContext("2d");
@@ -302,20 +356,19 @@ const CanvasComponent: React.FC = () => {
 
       pdfImage.selectable = false;
       pdfImage.evented = false;
+
       canvas.backgroundImage = pdfImage;
-
-      // center + reset viewport
-      const dx = (canvas.getWidth() - viewport.width) / 2;
-      const dy = (canvas.getHeight() - viewport.height) / 2;
-      canvas.setViewportTransform([1, 0, 0, 1, dx, dy]);
-
       canvas.requestRenderAll();
+
+      // Auto-fit after upload
+      requestAnimationFrame(() => fitToPdf());
     } catch (err) {
       console.error(err);
       alert("Failed to upload PDF.");
     }
   };
 
+  // Sidebar drag start
   const handleDragStart = (
     event: React.DragEvent<HTMLImageElement>,
     src: string
@@ -324,11 +377,47 @@ const CanvasComponent: React.FC = () => {
     event.dataTransfer.effectAllowed = "copy";
   };
 
-  // toolbar click handlers (don’t let clicks start selection on canvas)
+  // ---- toolbar dragging ----
+  const onToolbarMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return; // clicking buttons shouldn't drag
+
+    dragRef.current.dragging = true;
+    dragRef.current.startX = e.clientX;
+    dragRef.current.startY = e.clientY;
+    dragRef.current.originX = toolbarPos.x;
+    dragRef.current.originY = toolbarPos.y;
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current.dragging) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+
+      setToolbarPos({
+        x: dragRef.current.originX + dx,
+        y: dragRef.current.originY + dy,
+      });
+    };
+    const onUp = () => {
+      dragRef.current.dragging = false;
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [toolbarPos.x, toolbarPos.y]);
+
   const PAN_STEP = 40;
 
   return (
     <div>
+      {/* Upload */}
       <div style={styles.uploadSection}>
         <input
           type="file"
@@ -337,13 +426,31 @@ const CanvasComponent: React.FC = () => {
           style={styles.uploadInput}
         />
         <label style={styles.uploadLabel}>
-          Drag background to pan (or Space+drag anywhere). Wheel zoom. Delete
-          removes selected icon.
+          Delete removes selected icon. Arrow keys pan. Space+drag pans anywhere.
         </label>
       </div>
 
+      {/* Workspace */}
       <div style={styles.workspace}>
+        {/* Sidebar */}
         <div style={styles.iconsContainer}>
+          {/* ✅ Nav Tool toggle button */}
+          <button
+            type="button"
+            style={{
+              ...styles.navToggleBtn,
+              ...(toolbarVisible ? styles.navToggleBtnOn : styles.navToggleBtnOff),
+            }}
+            onClick={() => setToolbarVisible((v) => !v)}
+            aria-pressed={toolbarVisible}
+            title="Toggle navigation tool"
+          >
+            <span style={styles.navDot} />
+            Nav Tool
+          </button>
+
+          <div style={{ height: 8 }} />
+
           {images.map((src, i) => (
             <img
               key={i}
@@ -356,73 +463,105 @@ const CanvasComponent: React.FC = () => {
           ))}
         </div>
 
-        {/* Canvas wrapper is position:relative so toolbar can overlay */}
+        {/* Canvas + overlay UI */}
         <div style={styles.canvasWrap}>
-          {/* Floating toolbar overlay */}
-          <div
-            style={styles.toolbar}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={(e) => e.preventDefault()}
-          >
-            <button
-              type="button"
-              style={styles.btn}
-              title="Pan up"
-              onClick={() => panBy(0, PAN_STEP)}
-            >
-              ▲
-            </button>
+          {/* Fabric host (Fabric injects canvases inside here) */}
+          <div ref={fabricHostRef} style={styles.fabricHost} />
 
-            <div style={styles.midRow}>
-              <button
-                type="button"
-                style={styles.btn}
-                title="Pan left"
-                onClick={() => panBy(PAN_STEP, 0)}
+          {/* Overlay layer (doesn't affect layout, doesn't interfere with canvas except toolbar area) */}
+          <div style={styles.overlay}>
+            {toolbarVisible && (
+              <div
+                style={{
+                  ...styles.toolbar,
+                  left: toolbarPos.x,
+                  top: toolbarPos.y,
+                }}
+                onMouseDown={onToolbarMouseDown}
               >
-                ◀
-              </button>
+                <div style={styles.toolbarHeader}>
+                  <div style={styles.toolbarTitleRow}>
+                    <span style={styles.toolbarTitle}>Navigate</span>
+                    <span style={styles.toolbarSub}>drag me</span>
+                  </div>
 
-              <div style={styles.zoomCol}>
+                  <button
+                    type="button"
+                    style={styles.closeBtn}
+                    title="Hide navigation tool"
+                    onClick={() => setToolbarVisible(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   style={styles.btn}
-                  title="Zoom in"
-                  onClick={() => zoomBy(0.2)}
+                  title="Pan up"
+                  onClick={() => panBy(0, PAN_STEP)}
                 >
-                  🔍+
+                  ▲
                 </button>
+
+                <div style={styles.midRow}>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    title="Pan left"
+                    onClick={() => panBy(PAN_STEP, 0)}
+                  >
+                    ◀
+                  </button>
+
+                  <div style={styles.zoomCol}>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      title="Zoom in"
+                      onClick={() => zoomBy(0.2)}
+                    >
+                      🔍+
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      title={`Zoom out (min ${MIN_ZOOM})`}
+                      onClick={() => zoomBy(-0.2)}
+                    >
+                      🔍-
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.btnSmall}
+                      title="Fit PDF"
+                      onClick={fitToPdf}
+                    >
+                      Fit
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    title="Pan right"
+                    onClick={() => panBy(-PAN_STEP, 0)}
+                  >
+                    ▶
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   style={styles.btn}
-                  title="Zoom out"
-                  onClick={() => zoomBy(-0.2)}
+                  title="Pan down"
+                  onClick={() => panBy(0, -PAN_STEP)}
                 >
-                  🔍-
+                  ▼
                 </button>
               </div>
-
-              <button
-                type="button"
-                style={styles.btn}
-                title="Pan right"
-                onClick={() => panBy(-PAN_STEP, 0)}
-              >
-                ▶
-              </button>
-            </div>
-
-            <button
-              type="button"
-              style={styles.btn}
-              title="Pan down"
-              onClick={() => panBy(0, -PAN_STEP)}
-            >
-              ▼
-            </button>
+            )}
           </div>
-
-          <canvas ref={canvasRef} style={styles.canvas} />
         </div>
       </div>
     </div>
@@ -436,11 +575,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   uploadInput: {
     padding: 10,
-    borderRadius: 6,
-    border: "1px solid #ccc",
+    borderRadius: 8,
+    border: "1px solid rgba(0,0,0,0.2)",
   },
   uploadLabel: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#555",
     display: "block",
     marginTop: 8,
@@ -454,59 +593,132 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   iconsContainer: {
+    width: 220,
+    padding: 10,
+    borderRight: "1px solid #e0e0e0",
     display: "flex",
     flexDirection: "column",
     gap: 10,
-    borderRight: "1px solid #ccc",
-    padding: 10,
-    width: 200,
   },
+
+  navToggleBtn: {
+    height: 40,
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.18)",
+    cursor: "pointer",
+    fontWeight: 700,
+    letterSpacing: "0.2px",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "0 12px",
+    boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+    transition: "transform 80ms ease, box-shadow 120ms ease",
+  },
+  navToggleBtnOn: {
+    background: "linear-gradient(180deg, #ffffff 0%, #f1f7ff 100%)",
+  },
+  navToggleBtnOff: {
+    background: "linear-gradient(180deg, #ffffff 0%, #f7f7f7 100%)",
+    opacity: 0.85,
+  },
+  navDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    background: "#2f7cf6",
+    boxShadow: "0 0 0 3px rgba(47,124,246,0.15)",
+  },
+
   icon: {
     width: 40,
     height: 40,
     cursor: "grab",
     border: "1px solid #ccc",
-    borderRadius: 4,
+    borderRadius: 6,
     padding: 4,
+    background: "white",
   },
 
-  // wrapper so toolbar overlays without moving layout
   canvasWrap: {
     position: "relative",
     flex: 1,
   },
 
-  canvas: {
+  // Fabric host gets the border + radius, Fabric canvases sit inside it
+  fabricHost: {
     width: "100%",
-    height: 800,
+    height: CANVAS_H,
     border: "1px solid #999",
-    borderRadius: 10,
-    display: "block",
+    borderRadius: 12,
+    overflow: "hidden",
+    background: "#f3f3f3",
   },
 
-  // floating toolbar
-  toolbar: {
+  // Overlay sits on top, doesn't block canvas except where toolbar is
+  overlay: {
     position: "absolute",
-    top: 12,
-    left: 12,
+    inset: 0,
+    pointerEvents: "none",
+  },
+
+  toolbar: {
+    pointerEvents: "auto",
+    position: "absolute",
     zIndex: 10,
-    background: "rgba(255,255,255,0.9)",
-    border: "1px solid rgba(0,0,0,0.15)",
-    borderRadius: 12,
+    width: 170,
     padding: 10,
-    boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.15)",
+    background: "rgba(255,255,255,0.92)",
+    boxShadow: "0 8px 22px rgba(0,0,0,0.14)",
     display: "flex",
     flexDirection: "column",
     gap: 8,
     userSelect: "none",
+    cursor: "grab",
+    backdropFilter: "blur(6px)",
+  },
+
+  toolbarHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  toolbarTitleRow: {
+    display: "flex",
+    flexDirection: "column",
+    lineHeight: 1.1,
+  },
+
+  toolbarTitle: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#222",
+  },
+
+  toolbarSub: {
+    fontSize: 11,
+    color: "#666",
+    fontWeight: 600,
+  },
+
+  closeBtn: {
+    width: 34,
+    height: 30,
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "white",
+    cursor: "pointer",
   },
 
   midRow: {
     display: "flex",
-    flexDirection: "row",
-    gap: 8,
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
   },
 
   zoomCol: {
@@ -518,12 +730,22 @@ const styles: Record<string, React.CSSProperties> = {
   btn: {
     width: 44,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.18)",
     background: "white",
     cursor: "pointer",
     fontSize: 14,
-    lineHeight: "14px",
+  },
+
+  btnSmall: {
+    width: 44,
+    height: 30,
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "white",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 800,
   },
 };
 
