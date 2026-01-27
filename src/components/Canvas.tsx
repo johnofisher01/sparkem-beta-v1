@@ -1,4 +1,3 @@
-// Canvas.tsx
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Canvas,
@@ -6,8 +5,15 @@ import {
   Point,
   TMat2D,
   util as fabricUtil,
+  Rect,
 } from "fabric";
 import * as pdfjsLib from "pdfjs-dist";
+
+declare global {
+  interface Window {
+    __fabricCanvas?: Canvas | null;
+  }
+}
 
 declare module "fabric" {
   interface Canvas {
@@ -26,6 +32,17 @@ const clamp = (v: number, min: number, max: number) =>
 const CANVAS_W = 1200;
 const CANVAS_H = 800;
 
+// --------- A3 PAGE (world space) ----------
+const DPI = 150; // change if you want (96 / 150 / 300)
+const MM_PER_INCH = 25.4;
+
+// A3 = 420mm x 297mm (landscape)
+const A3_W_PX = Math.round((420 / MM_PER_INCH) * DPI);
+const A3_H_PX = Math.round((297 / MM_PER_INCH) * DPI);
+
+const PAGE_NAME = "A3_PAGE";
+const PDF_NAME = "PDF_PAGE";
+
 const CanvasComponent: React.FC = () => {
   // Fabric host (React never renders <canvas> directly)
   const fabricHostRef = useRef<HTMLDivElement | null>(null);
@@ -43,7 +60,7 @@ const CanvasComponent: React.FC = () => {
     "/images/fork2.png",
   ]);
 
-  // Nav Tool toggle
+  // Nav Tool toggle (UI only)
   const [toolbarVisible, setToolbarVisible] = useState(true);
 
   // Draggable toolbar position
@@ -57,8 +74,23 @@ const CanvasComponent: React.FC = () => {
   });
 
   // Zoom limits
-  const MIN_ZOOM = 0.05;
-  const MAX_ZOOM = 8;
+  const MIN_ZOOM = 0.02;
+  const MAX_ZOOM = 12;
+
+  // ---------------------------------------
+  // Helpers: find page / pdf objects
+  // ---------------------------------------
+  const getPageRect = useCallback(() => {
+    const canvas = fabricCanvas.current;
+    if (!canvas) return null;
+    return canvas.getObjects().find((o: any) => o?.name === PAGE_NAME) as any;
+  }, []);
+
+  const getPdfObj = useCallback(() => {
+    const canvas = fabricCanvas.current;
+    if (!canvas) return null;
+    return canvas.getObjects().find((o: any) => o?.name === PDF_NAME) as any;
+  }, []);
 
   // ---------------------------------------
   // Pan / Zoom helpers
@@ -96,44 +128,34 @@ const CanvasComponent: React.FC = () => {
     [zoomTo]
   );
 
-  // ✅ Fit uses Fabric backgroundImage real size (matches your "image 2" feel)
-  const fitToPdf = useCallback(() => {
+  /**
+   * ✅ Fit viewport to show A3 page nicely
+   * IMPORTANT: Nav button must NOT affect canvas.
+   * So we DO NOT vary padding based on toolbarVisible.
+   */
+  const fitToA3Page = useCallback(() => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
-    const bg = canvas.backgroundImage as any;
-    if (!bg) return;
-
-    const bgW = (bg.width || 1) * (bg.scaleX || 1);
-    const bgH = (bg.height || 1) * (bg.scaleY || 1);
-
-    // ✅ leave room on the RIGHT so the PDF isn't hidden behind the nav tool
     const paddingLeft = 20;
     const paddingTop = 20;
     const paddingBottom = 20;
-    const paddingRight = toolbarVisible ? 240 : 20; // room for floating nav tool
+    const paddingRight = 20; // ✅ constant: Nav toggle won't change fit
 
     const cw = canvas.getWidth() - paddingLeft - paddingRight;
     const ch = canvas.getHeight() - paddingTop - paddingBottom;
 
-    const s = clamp(Math.min(cw / bgW, ch / bgH), MIN_ZOOM, MAX_ZOOM);
+    const s = clamp(Math.min(cw / A3_W_PX, ch / A3_H_PX), MIN_ZOOM, MAX_ZOOM);
 
-    const dx = paddingLeft + (cw - bgW * s) / 2;
-    const dy = paddingTop + (ch - bgH * s) / 2;
+    const dx = paddingLeft + (cw - A3_W_PX * s) / 2;
+    const dy = paddingTop + (ch - A3_H_PX * s) / 2;
 
     canvas.setViewportTransform([s, 0, 0, s, dx, dy]);
     canvas.requestRenderAll();
-  }, [MIN_ZOOM, MAX_ZOOM, toolbarVisible]);
-
-  // Re-fit when nav tool is shown/hidden so right padding updates
-  useEffect(() => {
-    // small delay so layout settles
-    const t = window.setTimeout(() => fitToPdf(), 0);
-    return () => window.clearTimeout(t);
-  }, [toolbarVisible, fitToPdf]);
+  }, [MIN_ZOOM, MAX_ZOOM]);
 
   // ---------------------------------------
-  // Keyboard: delete removes selected, arrows pan, space = pan-anywhere override
+  // Keyboard: delete removes selected, arrows pan, space = pan-anywhere
   // ---------------------------------------
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -145,7 +167,6 @@ const CanvasComponent: React.FC = () => {
       const canvas = fabricCanvas.current;
       if (!canvas) return;
 
-      // don't hijack keys while typing
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       const isTyping =
         tag === "input" ||
@@ -153,10 +174,9 @@ const CanvasComponent: React.FC = () => {
         (e.target as any)?.isContentEditable;
       if (isTyping) return;
 
-      // delete selected object
       if (e.key === "Delete" || e.key === "Backspace") {
-        const active = canvas.getActiveObject();
-        if (active) {
+        const active: any = canvas.getActiveObject();
+        if (active && active.name !== PAGE_NAME && active.name !== PDF_NAME) {
           canvas.remove(active);
           canvas.discardActiveObject();
           canvas.requestRenderAll();
@@ -165,7 +185,6 @@ const CanvasComponent: React.FC = () => {
         return;
       }
 
-      // arrow pan
       const step = e.shiftKey ? 80 : 35;
       if (e.key === "ArrowUp") {
         panBy(0, step);
@@ -195,7 +214,7 @@ const CanvasComponent: React.FC = () => {
   }, [panBy]);
 
   // ---------------------------------------
-  // Init Fabric (React never owns the <canvas> DOM)
+  // Init Fabric (MUST NOT re-run on Nav toggle)
   // ---------------------------------------
   useEffect(() => {
     if (fabricCanvas.current) return;
@@ -212,17 +231,38 @@ const CanvasComponent: React.FC = () => {
     const canvas = new Canvas(el, {
       width: CANVAS_W,
       height: CANVAS_H,
-      backgroundColor: "#f3f3f3",
+      backgroundColor: "#e9e9e9",
       selection: true,
     });
 
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
     fabricCanvas.current = canvas;
 
+    // ✅ expose to CanvasEditor
+    (window as any).__fabricCanvas = canvas;
+
     // Remove global selection visuals
     canvas.selectionColor = "rgba(0,0,0,0)";
     canvas.selectionBorderColor = "rgba(0,0,0,0)";
     canvas.selectionLineWidth = 0;
+
+    // ✅ Add A3 page rect (first object = back)
+    const pageRect = new Rect({
+      left: 0,
+      top: 0,
+      width: A3_W_PX,
+      height: A3_H_PX,
+      fill: "#ffffff",
+      stroke: "#c6c6c6",
+      strokeWidth: 2,
+      selectable: false,
+      evented: false,
+    }) as any;
+    pageRect.name = PAGE_NAME;
+
+    canvas.add(pageRect);
+
+    requestAnimationFrame(() => fitToA3Page());
 
     // ✅ Click-to-rotate (no rotate on drag)
     const clickState = {
@@ -254,12 +294,12 @@ const CanvasComponent: React.FC = () => {
     };
 
     const onMouseUpRotateGate = (opt: any) => {
-      const target = opt.target || null;
+      const target: any = opt.target || null;
       if (!clickState.target) return;
       if (target !== clickState.target) return;
       if (clickState.moved) return;
 
-      if (target && target.type === "image") {
+      if (target && target.type === "image" && target.name !== PDF_NAME) {
         const delta = clickState.shiftKey ? -90 : 90;
         target.rotate(((target.angle ?? 0) + delta + 360) % 360);
         canvas.requestRenderAll();
@@ -345,6 +385,7 @@ const CanvasComponent: React.FC = () => {
 
       const img = await FabricImage.fromURL(src, { crossOrigin: "anonymous" });
 
+      // ✅ icon size (change here)
       const TARGET_WIDTH = 30;
       const scale = TARGET_WIDTH / (img.width || 1);
       img.scale(scale);
@@ -381,12 +422,13 @@ const CanvasComponent: React.FC = () => {
 
       canvas.dispose();
       fabricCanvas.current = null;
+      (window as any).__fabricCanvas = null;
       el.remove();
     };
-  }, [MIN_ZOOM, MAX_ZOOM]);
+  }, [MIN_ZOOM, MAX_ZOOM, fitToA3Page]);
 
   // ---------------------------------------
-  // PDF upload (sharp + auto-fit)
+  // PDF upload (render -> add as object inside A3 page)
   // ---------------------------------------
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current;
@@ -426,15 +468,39 @@ const CanvasComponent: React.FC = () => {
         crossOrigin: "anonymous",
       });
 
+      const oldPdf = getPdfObj();
+      if (oldPdf) canvas.remove(oldPdf);
+
+      (pdfImage as any).name = PDF_NAME;
       pdfImage.selectable = false;
       pdfImage.evented = false;
-      pdfImage.scaleX = 1;
-      pdfImage.scaleY = 1;
 
-      canvas.backgroundImage = pdfImage;
+      const s = Math.min(
+        A3_W_PX / (pdfImage.width || 1),
+        A3_H_PX / (pdfImage.height || 1)
+      );
+      pdfImage.scale(s);
+
+      const pdfW = pdfImage.getScaledWidth();
+      const pdfH = pdfImage.getScaledHeight();
+
+      pdfImage.set({
+        left: (A3_W_PX - pdfW) / 2,
+        top: (A3_H_PX - pdfH) / 2,
+      });
+
+      // ✅ Ensure stacking order without moveTo/sendToBack:
+      // page first, pdf second, icons later on top
+      const pageRect: any = getPageRect();
+      if (pageRect) {
+        canvas.remove(pageRect);
+        canvas.add(pageRect);
+      }
+
+      canvas.add(pdfImage);
+
       canvas.requestRenderAll();
-
-      requestAnimationFrame(() => fitToPdf());
+      requestAnimationFrame(() => fitToA3Page());
     } catch (err) {
       console.error(err);
       alert("Failed to upload PDF.");
@@ -499,11 +565,12 @@ const CanvasComponent: React.FC = () => {
         />
         <label style={styles.uploadLabel}>
           Click icon to rotate 90°. Shift+Click rotates backwards. Drag to move.
+          (Hold Space to pan anywhere)
         </label>
       </div>
 
       <div style={styles.workspace}>
-        {/* ✅ Slim sidebar (removes the big wasted area) */}
+        {/* slim sidebar */}
         <div style={styles.iconsContainer}>
           <button
             type="button"
@@ -529,7 +596,7 @@ const CanvasComponent: React.FC = () => {
               onDragStart={(e) => handleDragStart(e, src)}
               style={styles.icon}
               alt={`Icon ${i}`}
-              title="Drag onto PDF"
+              title="Drag onto page"
             />
           ))}
         </div>
@@ -603,8 +670,8 @@ const CanvasComponent: React.FC = () => {
                     <button
                       type="button"
                       style={styles.btnSmall}
-                      title="Fit PDF"
-                      onClick={fitToPdf}
+                      title="Fit A3 page"
+                      onClick={fitToA3Page}
                     >
                       Fit
                     </button>
@@ -638,11 +705,7 @@ const CanvasComponent: React.FC = () => {
 };
 
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    width: "100%",
-    maxWidth: "100vw",
-    overflowX: "hidden",
-  },
+  page: { width: "100%", maxWidth: "100vw", overflowX: "hidden" },
 
   uploadSection: { marginBottom: 12, textAlign: "center" },
   uploadInput: {
@@ -658,7 +721,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 8,
   },
 
-  // ✅ smaller gap so sidebar doesn't eat space
   workspace: {
     display: "flex",
     flexDirection: "row",
@@ -667,7 +729,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
   },
 
-  // ✅ slim sidebar
   iconsContainer: {
     width: 86,
     padding: 8,
@@ -707,12 +768,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#2f7cf6",
     boxShadow: "0 0 0 3px rgba(47,124,246,0.15)",
   },
-  navToggleText: {
-    fontSize: 13,
-    letterSpacing: 0.2,
-  },
+  navToggleText: { fontSize: 13, letterSpacing: 0.2 },
 
-  // ✅ slightly bigger icons but tighter layout
   icon: {
     width: 46,
     height: 46,
@@ -724,7 +781,6 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
   },
 
-  // ✅ minWidth:0 is IMPORTANT so flex lets it expand properly
   canvasWrap: { position: "relative", flex: 1, minWidth: 0 },
 
   fabricHost: {
@@ -733,7 +789,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #999",
     borderRadius: 12,
     overflow: "hidden",
-    background: "#f3f3f3",
+    background: "#e9e9e9",
   },
 
   overlay: { position: "absolute", inset: 0, pointerEvents: "none" },
@@ -762,7 +818,6 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     gap: 8,
   },
-
   toolbarTitleRow: { display: "flex", flexDirection: "column", lineHeight: 1.1 },
   toolbarTitle: { fontSize: 12, fontWeight: 800, color: "#222" },
   toolbarSub: { fontSize: 11, color: "#666", fontWeight: 600 },
@@ -782,7 +837,6 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: 8,
   },
-
   zoomCol: { display: "flex", flexDirection: "column", gap: 6 },
 
   btn: {
@@ -794,7 +848,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 14,
   },
-
   btnSmall: {
     width: 44,
     height: 30,
