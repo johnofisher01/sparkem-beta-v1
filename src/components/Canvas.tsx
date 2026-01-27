@@ -1,23 +1,29 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Canvas, FabricImage, Point, TMat2D } from "fabric";
+import {
+  Canvas,
+  FabricImage,
+  Point,
+  TMat2D,
+  util as fabricUtil,
+} from "fabric";
 import * as pdfjsLib from "pdfjs-dist";
 
-// Extend Fabric.js Canvas type to include custom properties
 declare module "fabric" {
   interface Canvas {
     isDragging?: boolean;
     lastPosX?: number;
     lastPosY?: number;
-    viewportTransform: TMat2D; // Always defined as a valid transformation matrix
+    viewportTransform: TMat2D;
   }
 }
 
-// Configure PDF.js Worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
 
 const CanvasComponent: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvas = useRef<Canvas | null>(null);
+
+  const isSpaceDownRef = useRef(false);
 
   const [images] = useState([
     "/images/ampage.png",
@@ -28,81 +34,173 @@ const CanvasComponent: React.FC = () => {
     "/images/fork2.png",
   ]);
 
+  // Track Space key (optional pan override)
   useEffect(() => {
-    if (fabricCanvas.current) return; // Prevent reinitialization
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space") isSpaceDownRef.current = true;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") isSpaceDownRef.current = false;
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (fabricCanvas.current) return;
     if (!canvasRef.current) return;
 
-    // Initialize the Fabric.js canvas
     const canvas = new Canvas(canvasRef.current, {
       width: 1200,
       height: 800,
       backgroundColor: "#f3f3f3",
+      selection: true,
     });
-    
-    // Explicitly initialize `viewportTransform`
-    canvas.viewportTransform = [1, 0, 0, 1, 0, 0]; // Default matrix identity transformation
+
+    canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
     fabricCanvas.current = canvas;
 
-    // Enable zoom functionality
+    // Wheel zoom (zoom to cursor)
     const handleZoom = (event: any) => {
       const e = event.e as WheelEvent;
       e.preventDefault();
+
       let zoom = canvas.getZoom();
       zoom *= 0.999 ** e.deltaY;
-
-      // Limit zoom levels
       if (zoom > 5) zoom = 5;
       if (zoom < 0.5) zoom = 0.5;
 
       canvas.zoomToPoint(new Point(e.offsetX, e.offsetY), zoom);
+      canvas.requestRenderAll();
     };
 
-    // Drag-to-pan functionality for the viewport
+    // ✅ Pan behavior:
+    // - Drag empty space to pan
+    // - OR hold Space and drag anywhere (even over an icon) to pan
     const handleMouseDown = (event: any) => {
+      const clickedObject = !!event.target;
+      const allowPan = !clickedObject || isSpaceDownRef.current;
+      if (!allowPan) return;
+
       const e = event.e as MouseEvent;
       canvas.isDragging = true;
       canvas.selection = false;
+
+      canvas.defaultCursor = "grabbing";
       canvas.lastPosX = e.clientX;
       canvas.lastPosY = e.clientY;
     };
 
     const handleMouseMove = (event: any) => {
-      if (canvas.isDragging) {
-        const e = event.e as MouseEvent;
-        const vpt = canvas.viewportTransform!;
-        vpt[4] += e.clientX - canvas.lastPosX!;
-        vpt[5] += e.clientY - canvas.lastPosY!;
-        canvas.requestRenderAll();
-        canvas.lastPosX = e.clientX;
-        canvas.lastPosY = e.clientY;
-      }
+      if (!canvas.isDragging) return;
+
+      const e = event.e as MouseEvent;
+      const vpt = canvas.viewportTransform!;
+      vpt[4] += e.clientX - (canvas.lastPosX ?? e.clientX);
+      vpt[5] += e.clientY - (canvas.lastPosY ?? e.clientY);
+      canvas.lastPosX = e.clientX;
+      canvas.lastPosY = e.clientY;
+      canvas.requestRenderAll();
     };
 
     const handleMouseUp = () => {
       canvas.isDragging = false;
       canvas.selection = true;
+      canvas.defaultCursor = "default";
     };
 
-    // Attach event listeners
+    // Rotate dropped icons on Shift+Click
+    const handleRotateOnShiftClick = (event: any) => {
+      const e = event.e as MouseEvent;
+      if (!e.shiftKey) return;
+
+      const target = event.target as any;
+      if (!target || target.type !== "image") return;
+
+      target.rotate(((target.angle ?? 0) + 90) % 360);
+      canvas.requestRenderAll();
+    };
+
     canvas.on("mouse:wheel", handleZoom);
     canvas.on("mouse:down", handleMouseDown);
     canvas.on("mouse:move", handleMouseMove);
     canvas.on("mouse:up", handleMouseUp);
+    canvas.on("mouse:down", handleRotateOnShiftClick);
 
-    // Cleanup logic: Dispose canvas on unmount
+    // ✅ Drag/drop must bind to Fabric's *upper* canvas
+    const upper = canvas.upperCanvasEl;
+
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const src = e.dataTransfer?.getData("text/plain");
+      if (!src) return;
+
+      // DOM coords relative to upper canvas
+      const rect = upper.getBoundingClientRect();
+      const domX = (e.clientX ?? 0) - rect.left;
+      const domY = (e.clientY ?? 0) - rect.top;
+
+      // Convert DOM coords -> Fabric world coords (handles pan/zoom)
+      const vpt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+      const inv = fabricUtil.invertTransform(vpt);
+      const world = fabricUtil.transformPoint(new Point(domX, domY), inv);
+
+      const img = await FabricImage.fromURL(src, {
+        crossOrigin: "anonymous",
+      });
+
+      // ✅ Set a consistent dropped size
+      const TARGET_WIDTH = 30;
+      const scale = TARGET_WIDTH / (img.width || 1);
+      img.scale(scale);
+
+      img.set({
+        left: world.x,
+        top: world.y,
+        selectable: true,
+        evented: true,
+      });
+
+      canvas.add(img);
+      canvas.setActiveObject(img);
+      canvas.requestRenderAll();
+    };
+
+    upper.addEventListener("dragover", onDragOver);
+    upper.addEventListener("drop", onDrop);
+
     return () => {
+      upper.removeEventListener("dragover", onDragOver);
+      upper.removeEventListener("drop", onDrop);
+
       canvas.off("mouse:wheel", handleZoom);
       canvas.off("mouse:down", handleMouseDown);
       canvas.off("mouse:move", handleMouseMove);
       canvas.off("mouse:up", handleMouseUp);
+      canvas.off("mouse:down", handleRotateOnShiftClick);
+
       canvas.dispose();
       fabricCanvas.current = null;
     };
   }, []);
 
-  // Handle PDF Upload
+  // PDF Upload
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const canvas = fabricCanvas.current!;
+    const canvas = fabricCanvas.current;
+    if (!canvas) return;
+
     const file = event.target.files?.[0];
     if (!file || file.type !== "application/pdf") {
       alert("Please upload a valid PDF file.");
@@ -112,83 +210,88 @@ const CanvasComponent: React.FC = () => {
     try {
       const pdfData = await file.arrayBuffer();
       const pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
-      const page = await pdfDoc.getPage(1); // Load the first page only
+      const page = await pdfDoc.getPage(1);
+
       const viewport = page.getViewport({ scale: 1 });
 
       const pdfCanvas = document.createElement("canvas");
-      const context = pdfCanvas.getContext("2d")!;
+      const ctx = pdfCanvas.getContext("2d");
+      if (!ctx) throw new Error("No PDF canvas context");
+
       pdfCanvas.width = viewport.width;
       pdfCanvas.height = viewport.height;
 
-      await page.render({
-        canvasContext: context,
-        viewport,
-        canvas: pdfCanvas,
-      }).promise;
+      await page
+        .render({
+          canvasContext: ctx,
+          viewport,
+          canvas: pdfCanvas, // required by your typings
+        } as any)
+        .promise;
 
       const dataUrl = pdfCanvas.toDataURL("image/png");
 
-      const pdfImage = await FabricImage.fromURL(dataUrl);
-      pdfImage.selectable = false;
+      const pdfImage = await FabricImage.fromURL(dataUrl, {
+        crossOrigin: "anonymous",
+      });
 
-      // Center the uploaded PDF in the viewport
+      pdfImage.selectable = false;
+      pdfImage.evented = false;
+
       canvas.backgroundImage = pdfImage;
-      canvas.viewportTransform = [1, 0, 0, 1, (canvas.width - viewport.width) / 2, (canvas.height - viewport.height) / 2];
+
+      // Center PDF and reset zoom/pan
+      const dx = (canvas.getWidth() - viewport.width) / 2;
+      const dy = (canvas.getHeight() - viewport.height) / 2;
+      canvas.setViewportTransform([1, 0, 0, 1, dx, dy]);
+
       canvas.requestRenderAll();
-    } catch (error) {
-      console.error("Error uploading PDF:", error);
-      alert("Failed to upload PDF. Please try again.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to upload PDF.");
     }
   };
 
-  const handleDragStart = (event: React.DragEvent<HTMLImageElement>, src: string) => {
+  // Sidebar drag start
+  const handleDragStart = (
+    event: React.DragEvent<HTMLImageElement>,
+    src: string
+  ) => {
     event.dataTransfer.setData("text/plain", src);
-  };
-
-  const handleDrop = async (event: React.DragEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const canvas = fabricCanvas.current!;
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-
-    const imageSrc = event.dataTransfer.getData("text/plain");
-    const img = await FabricImage.fromURL(imageSrc);
-    img.set({ left: x, top: y, selectable: true });
-    canvas.add(img);
-    canvas.renderAll();
-  };
-
-  const handleDragOver = (event: React.DragEvent<HTMLCanvasElement>) => {
-    event.preventDefault();
+    event.dataTransfer.effectAllowed = "copy";
   };
 
   return (
     <div>
-      {/* PDF Upload Section */}
       <div style={styles.uploadSection}>
-        <input type="file" accept="application/pdf" onChange={handlePdfUpload} style={styles.uploadInput} />
-        <label style={styles.uploadLabel}>Upload a PDF</label>
+        <input
+          type="file"
+          accept="application/pdf"
+          onChange={handlePdfUpload}
+          style={styles.uploadInput}
+        />
+        <label style={styles.uploadLabel}>
+          Drag background to pan (or hold Space to pan anywhere). Wheel to zoom.
+          Shift+Click icon to rotate.
+        </label>
       </div>
-      {/* Workspace */}
+
       <div style={styles.workspace}>
         <div style={styles.iconsContainer}>
-          {images.map((src, index) => (
+          {images.map((src, i) => (
             <img
-              key={index}
+              key={i}
               src={src}
               draggable
-              onDragStart={(event) => handleDragStart(event, src)}
+              onDragStart={(e) => handleDragStart(e, src)}
               style={styles.icon}
-              alt={`Icon ${index}`}
+              alt={`Icon ${i}`}
             />
           ))}
         </div>
-        <canvas
-          ref={canvasRef}
-          style={styles.canvas}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-        />
+
+        {/* Important: no React onDrop here; Fabric overlays an upper canvas */}
+        <canvas ref={canvasRef} style={styles.canvas} />
       </div>
     </div>
   );
