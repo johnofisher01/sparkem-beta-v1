@@ -202,7 +202,6 @@ const CanvasComponent: React.FC = () => {
           onChange={handlePdfUpload}
           style={{ marginRight: "10px", padding: "4px" }}
         />
-        <h2 style={{ margin: "0" }}>Design Workspace</h2>
       </div>
 
       {/* Layout: Icons and Canvas */}
