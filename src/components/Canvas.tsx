@@ -8,7 +8,7 @@ declare module "fabric" {
     isDragging?: boolean;
     lastPosX?: number;
     lastPosY?: number;
-    viewportTransform: TMat2D; // Always defined transformation matrix
+    viewportTransform: TMat2D; // Always defined as a valid transformation matrix
   }
 }
 
@@ -38,22 +38,22 @@ const CanvasComponent: React.FC = () => {
       height: 800,
       backgroundColor: "#f3f3f3",
     });
-
-    // Explicitly initialize the viewportTransform to identity matrix
-    canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+    
+    // Explicitly initialize `viewportTransform`
+    canvas.viewportTransform = [1, 0, 0, 1, 0, 0]; // Default matrix identity transformation
     fabricCanvas.current = canvas;
 
     // Enable zoom functionality
     const handleZoom = (event: any) => {
       const e = event.e as WheelEvent;
       e.preventDefault();
-
       let zoom = canvas.getZoom();
-      zoom *= 0.999 ** e.deltaY; // Zoom in or out smoothly
+      zoom *= 0.999 ** e.deltaY;
 
-      // Updated zoom limits to allow zooming out further
-      if (zoom > 5) zoom = 5; // Max zoom level
-      if (zoom < 0.1) zoom = 0.1; // Minimum zoom level
+      // Limit zoom levels
+      if (zoom > 5) zoom = 5;
+      if (zoom < 0.5) zoom = 0.5;
+
       canvas.zoomToPoint(new Point(e.offsetX, e.offsetY), zoom);
     };
 
@@ -100,7 +100,7 @@ const CanvasComponent: React.FC = () => {
     };
   }, []);
 
-  // Handle PDF Upload: Centers and scales the PDF inside the canvas
+  // Handle PDF Upload
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current!;
     const file = event.target.files?.[0];
@@ -131,17 +131,9 @@ const CanvasComponent: React.FC = () => {
       const pdfImage = await FabricImage.fromURL(dataUrl);
       pdfImage.selectable = false;
 
-      // Calculate proper scaling and centering
-      const scaleX = canvas.width / viewport.width;
-      const scaleY = canvas.height / viewport.height;
-      const minScale = Math.min(scaleX, scaleY); // Fit within canvas
-
-      pdfImage.scale(minScale);
-      const centerX = (canvas.width - viewport.width * minScale) / 2;
-      const centerY = (canvas.height - viewport.height * minScale) / 2;
-
-      canvas.viewportTransform = [minScale, 0, 0, minScale, centerX, centerY];
-      canvas.add(pdfImage);
+      // Center the uploaded PDF in the viewport
+      canvas.backgroundImage = pdfImage;
+      canvas.viewportTransform = [1, 0, 0, 1, (canvas.width - viewport.width) / 2, (canvas.height - viewport.height) / 2];
       canvas.requestRenderAll();
     } catch (error) {
       console.error("Error uploading PDF:", error);
