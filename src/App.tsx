@@ -1,20 +1,24 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, Container } from '@mui/material';
-import FabricCanvas from './components/Canvas';
+import CanvasComponent from './components/Canvas'; // Main canvas component
 
 function App() {
   return (
     <>
-      <AppBar position="static">
+      {/* Professional Header */}
+      <AppBar position="static" style={{ backgroundColor: '#002d62' }}>
         <Toolbar>
-          <Typography variant="h6">A3 Design Editor</Typography>
+          <Typography variant="h6" style={{ color: '#fff', flex: 1, textAlign: 'center' }}>
+            RJ Dorey Electrical Designs
+          </Typography>
         </Toolbar>
       </AppBar>
+
+      {/* Main Content */}
       <Container style={{ marginTop: 20 }}>
-        <Typography variant="h4" gutterBottom>
-          Design Workspace
-        </Typography>
-        <FabricCanvas />
+        
+        {/* Canvas Component */}
+        <CanvasComponent />
       </Container>
     </>
   );

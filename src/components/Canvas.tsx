@@ -1,23 +1,25 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Canvas, FabricImage, Point } from "fabric";
+import React, { useRef, useEffect, useState } from "react";
+import { Canvas, FabricImage, Point, TMat2D } from "fabric";
 import * as pdfjsLib from "pdfjs-dist";
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
-
-// Extend Fabric.js Canvas type
-interface CustomFabricCanvas extends Canvas {
-  isDragging?: boolean;
-  lastPosX?: number;
-  lastPosY?: number;
+// Extend Fabric.js Canvas type to include custom properties
+declare module "fabric" {
+  interface Canvas {
+    isDragging?: boolean;
+    lastPosX?: number;
+    lastPosY?: number;
+    viewportTransform: TMat2D; // Always defined as a valid transformation matrix
+  }
 }
+
+// Configure PDF.js Worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
 
 const CanvasComponent: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fabricCanvas = useRef<CustomFabricCanvas | null>(null);
+  const fabricCanvas = useRef<Canvas | null>(null);
 
-  // Draggable image assets
-  const [images] = useState<string[]>([
+  const [images] = useState([
     "/images/ampage.png",
     "/images/bobble-legs.png",
     "/images/bobble.png",
@@ -27,69 +29,72 @@ const CanvasComponent: React.FC = () => {
   ]);
 
   useEffect(() => {
+    if (fabricCanvas.current) return; // Prevent reinitialization
     if (!canvasRef.current) return;
 
+    // Initialize the Fabric.js canvas
     const canvas = new Canvas(canvasRef.current, {
       width: 1200,
       height: 800,
       backgroundColor: "#f3f3f3",
-    }) as CustomFabricCanvas;
-
+    });
+    
+    // Explicitly initialize `viewportTransform`
+    canvas.viewportTransform = [1, 0, 0, 1, 0, 0]; // Default matrix identity transformation
     fabricCanvas.current = canvas;
 
-    // Add zoom functionality
-    const onWheel = (opt: any) => {
-      const e = opt.e as WheelEvent;
+    // Enable zoom functionality
+    const handleZoom = (event: any) => {
+      const e = event.e as WheelEvent;
       e.preventDefault();
-
       let zoom = canvas.getZoom();
       zoom *= 0.999 ** e.deltaY;
 
-      // Allow zoom levels from 0.01x to 100x
-      zoom = Math.max(0.01, Math.min(zoom, 100));
-      const point = new Point(e.offsetX, e.offsetY);
-      canvas.zoomToPoint(point, zoom);
+      // Limit zoom levels
+      if (zoom > 5) zoom = 5;
+      if (zoom < 0.5) zoom = 0.5;
+
+      canvas.zoomToPoint(new Point(e.offsetX, e.offsetY), zoom);
     };
 
-    canvas.on("mouse:wheel", onWheel);
+    // Drag-to-pan functionality for the viewport
+    const handleMouseDown = (event: any) => {
+      const e = event.e as MouseEvent;
+      canvas.isDragging = true;
+      canvas.selection = false;
+      canvas.lastPosX = e.clientX;
+      canvas.lastPosY = e.clientY;
+    };
 
-    // Add panning functionality
-    const onMouseDown = (opt: any) => {
-      const evt = opt.e as MouseEvent;
-      if (evt.altKey) {
-        canvas.isDragging = true;
-        canvas.selection = false;
-        canvas.lastPosX = evt.clientX;
-        canvas.lastPosY = evt.clientY;
+    const handleMouseMove = (event: any) => {
+      if (canvas.isDragging) {
+        const e = event.e as MouseEvent;
+        const vpt = canvas.viewportTransform!;
+        vpt[4] += e.clientX - canvas.lastPosX!;
+        vpt[5] += e.clientY - canvas.lastPosY!;
+        canvas.requestRenderAll();
+        canvas.lastPosX = e.clientX;
+        canvas.lastPosY = e.clientY;
       }
     };
 
-    const onMouseMove = (opt: any) => {
-      if (!canvas.isDragging) return;
-      const e = opt.e as MouseEvent;
-      const vpt = canvas.viewportTransform!;
-      vpt[4] += e.clientX - (canvas.lastPosX || 0);
-      vpt[5] += e.clientY - (canvas.lastPosY || 0);
-      canvas.lastPosX = e.clientX;
-      canvas.lastPosY = e.clientY;
-      canvas.requestRenderAll();
-    };
-
-    const onMouseUp = () => {
+    const handleMouseUp = () => {
       canvas.isDragging = false;
       canvas.selection = true;
     };
 
-    canvas.on("mouse:down", onMouseDown);
-    canvas.on("mouse:move", onMouseMove);
-    canvas.on("mouse:up", onMouseUp);
+    // Attach event listeners
+    canvas.on("mouse:wheel", handleZoom);
+    canvas.on("mouse:down", handleMouseDown);
+    canvas.on("mouse:move", handleMouseMove);
+    canvas.on("mouse:up", handleMouseUp);
 
-    // Cleanup on unmount
+    // Cleanup logic: Dispose canvas on unmount
     return () => {
-      canvas.off("mouse:wheel", onWheel);
-      canvas.off("mouse:down", onMouseDown);
-      canvas.off("mouse:move", onMouseMove);
-      canvas.off("mouse:up", onMouseUp);
+      canvas.off("mouse:wheel", handleZoom);
+      canvas.off("mouse:down", handleMouseDown);
+      canvas.off("mouse:move", handleMouseMove);
+      canvas.off("mouse:up", handleMouseUp);
       canvas.dispose();
       fabricCanvas.current = null;
     };
@@ -97,157 +102,143 @@ const CanvasComponent: React.FC = () => {
 
   // Handle PDF Upload
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const canvas = fabricCanvas.current;
-    if (!canvas) return;
-
+    const canvas = fabricCanvas.current!;
     const file = event.target.files?.[0];
     if (!file || file.type !== "application/pdf") {
-      alert("Please upload a valid PDF.");
+      alert("Please upload a valid PDF file.");
       return;
     }
 
     try {
-      const pdfData = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = () => reject(new Error("Failed to read file input"));
-        reader.readAsArrayBuffer(file);
-      });
-
+      const pdfData = await file.arrayBuffer();
       const pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      const page = await pdfDoc.getPage(1); // Load the first page only
+      const viewport = page.getViewport({ scale: 1 });
 
-      let pdfWidth = 0;
-      let pdfHeight = 0;
+      const pdfCanvas = document.createElement("canvas");
+      const context = pdfCanvas.getContext("2d")!;
+      pdfCanvas.width = viewport.width;
+      pdfCanvas.height = viewport.height;
 
-      for (let i = 1; i <= pdfDoc.numPages; i++) {
-        const page = await pdfDoc.getPage(i);
-        const viewport = page.getViewport({ scale: 1.5 });
+      await page.render({
+        canvasContext: context,
+        viewport,
+        canvas: pdfCanvas,
+      }).promise;
 
-        const pdfCanvas = document.createElement("canvas");
-        const context = pdfCanvas.getContext("2d")!;
-        pdfCanvas.width = viewport.width;
-        pdfCanvas.height = viewport.height;
+      const dataUrl = pdfCanvas.toDataURL("image/png");
 
-        await page.render({
-          canvasContext: context,
-          viewport,
-          canvas: pdfCanvas,
-        }).promise;
+      const pdfImage = await FabricImage.fromURL(dataUrl);
+      pdfImage.selectable = false;
 
-        const dataUrl = pdfCanvas.toDataURL("image/png");
-        const img = await FabricImage.fromURL(dataUrl);
-        img.set({ left: 50, top: i * 100 });
-        canvas.add(img);
-
-        pdfWidth = Math.max(pdfWidth, viewport.width);
-        pdfHeight += viewport.height;
-      }
-
-      const scaleFactor = Math.min(canvas.width / pdfWidth, canvas.height / pdfHeight);
-      canvas.setZoom(scaleFactor / 2);
-
-      const vpt = canvas.viewportTransform!;
-      vpt[4] = (canvas.width - pdfWidth * scaleFactor) / 2;
-      vpt[5] = (canvas.height - pdfHeight * scaleFactor) / 2;
-      canvas.setViewportTransform(vpt);
+      // Center the uploaded PDF in the viewport
+      canvas.backgroundImage = pdfImage;
+      canvas.viewportTransform = [1, 0, 0, 1, (canvas.width - viewport.width) / 2, (canvas.height - viewport.height) / 2];
       canvas.requestRenderAll();
     } catch (error) {
-      console.error("Error processing the uploaded PDF:", error);
-      alert("Failed to process PDF.");
+      console.error("Error uploading PDF:", error);
+      alert("Failed to upload PDF. Please try again.");
     }
   };
 
-  // Handle image drag start
-  const handleDragStart = (event: React.DragEvent<HTMLImageElement>, imageSrc: string) => {
-    event.dataTransfer.setData("text/plain", imageSrc);
+  const handleDragStart = (event: React.DragEvent<HTMLImageElement>, src: string) => {
+    event.dataTransfer.setData("text/plain", src);
   };
 
-  // Handle image drop onto canvas
   const handleDrop = async (event: React.DragEvent<HTMLCanvasElement>) => {
-    const canvas = fabricCanvas.current;
-    if (!canvas) return;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const canvas = fabricCanvas.current!;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
 
     const imageSrc = event.dataTransfer.getData("text/plain");
-    try {
-      const img = await FabricImage.fromURL(imageSrc);
-      img.set({ left: event.clientX, top: event.clientY, selectable: true });
-      canvas.add(img);
-
-      // Enable rotation on click
-      img.on("mousedown", () => {
-        img.rotate((img.angle || 0) + 90);
-        canvas.requestRenderAll();
-      });
-
-      canvas.requestRenderAll();
-    } catch (error) {
-      console.error("Error loading image:", error);
-    }
-
-    event.preventDefault();
+    const img = await FabricImage.fromURL(imageSrc);
+    img.set({ left: x, top: y, selectable: true });
+    canvas.add(img);
+    canvas.renderAll();
   };
 
-  // Allow drag-over
   const handleDragOver = (event: React.DragEvent<HTMLCanvasElement>) => {
     event.preventDefault();
   };
 
   return (
     <div>
-      {/* Title and PDF Upload */}
-      <div style={{ marginBottom: "20px", display: "flex", alignItems: "center" }}>
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={handlePdfUpload}
-          style={{ marginRight: "10px", padding: "4px" }}
-        />
+      {/* PDF Upload Section */}
+      <div style={styles.uploadSection}>
+        <input type="file" accept="application/pdf" onChange={handlePdfUpload} style={styles.uploadInput} />
+        <label style={styles.uploadLabel}>Upload a PDF</label>
       </div>
-
-      {/* Layout: Icons and Canvas */}
-      <div style={{ display: "flex" }}>
-        {/* Icons Panel */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "8px",
-            padding: "5px", // Compact padding for left-side icons
-          }}
-        >
+      {/* Workspace */}
+      <div style={styles.workspace}>
+        <div style={styles.iconsContainer}>
           {images.map((src, index) => (
             <img
               key={index}
               src={src}
               draggable
               onDragStart={(event) => handleDragStart(event, src)}
-              style={{
-                width: "25px",
-                height: "25px",
-                cursor: "grab",
-                border: "1px solid rgba(0, 0, 0, 0.5)",
-                borderRadius: "2px", // Slightly rounded icons
-              }}
-              alt={`Draggable Item ${index}`}
+              style={styles.icon}
+              alt={`Icon ${index}`}
             />
           ))}
         </div>
-
-        {/* Canvas */}
         <canvas
           ref={canvasRef}
-          style={{
-            border: "1px solid black",
-            width: "100%",
-            maxWidth: "1200px",
-            height: "800px",
-          }}
+          style={styles.canvas}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         />
       </div>
     </div>
   );
+};
+
+const styles = {
+  uploadSection: {
+    marginBottom: "20px",
+    textAlign: "center" as const,
+  },
+  uploadInput: {
+    padding: "10px",
+    borderRadius: "5px",
+    border: "1px solid #ccc",
+  },
+  uploadLabel: {
+    fontSize: "14px",
+    color: "#555",
+    display: "block" as const,
+    marginTop: "8px",
+  },
+  workspace: {
+    display: "flex" as const,
+    flexDirection: "row" as const,
+    gap: "20px",
+    marginTop: "20px",
+    alignItems: "flex-start" as const,
+  },
+  iconsContainer: {
+    display: "flex" as const,
+    flexDirection: "column" as const,
+    gap: "10px",
+    borderRight: "1px solid #ccc",
+    padding: "10px",
+    width: "200px",
+  },
+  icon: {
+    width: "40px",
+    height: "40px",
+    cursor: "grab",
+    border: "1px solid #ccc",
+    borderRadius: "4px",
+    padding: "4px",
+  },
+  canvas: {
+    flex: 1,
+    border: "1px solid #999",
+    borderRadius: "10px",
+    height: "800px",
+  },
 };
 
 export default CanvasComponent;
