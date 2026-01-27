@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Canvas, FabricImage, Point } from "fabric";
 import * as pdfjsLib from "pdfjs-dist";
 
-// Configure PDF.js to use the locally hosted worker
+// Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
 
 // Extend Fabric.js Canvas type
@@ -12,14 +12,23 @@ interface CustomFabricCanvas extends Canvas {
   lastPosY?: number;
 }
 
-const FabricPdfCanvas: React.FC = () => {
+const CanvasComponent: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvas = useRef<CustomFabricCanvas | null>(null);
+
+  // Draggable image assets
+  const [images] = useState<string[]>([
+    "/images/ampage.png",
+    "/images/bobble-legs.png",
+    "/images/bobble.png",
+    "/images/fork-bobble.png",
+    "/images/fork1.png",
+    "/images/fork2.png",
+  ]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    // Initialize Fabric.js canvas
     const canvas = new Canvas(canvasRef.current, {
       width: 1200,
       height: 800,
@@ -28,41 +37,42 @@ const FabricPdfCanvas: React.FC = () => {
 
     fabricCanvas.current = canvas;
 
-    // Zoom functionality
+    // Enable zoom functionality
     const onWheel = (opt: any) => {
       const e = opt.e as WheelEvent;
       e.preventDefault();
-      const delta = e.deltaY;
-      let zoom = canvas.getZoom();
-      zoom *= 0.999 ** delta;
-      zoom = Math.max(0.5, Math.min(zoom, 3)); // Clamp between 0.5x and 3x
 
-      const point = new Point(e.offsetX, e.offsetY); // Get pointer position relative to canvas
+      let zoom = canvas.getZoom();
+      zoom *= 0.999 ** e.deltaY;
+
+      // Allow zoom levels from 0.01x to 100x
+      zoom = Math.max(0.01, Math.min(zoom, 100));
+      const point = new Point(e.offsetX, e.offsetY);
       canvas.zoomToPoint(point, zoom);
     };
 
     canvas.on("mouse:wheel", onWheel);
 
-    // Panning with ALT + Drag
+    // Panning functionality
     const onMouseDown = (opt: any) => {
       const evt = opt.e as MouseEvent;
       if (evt.altKey) {
         canvas.isDragging = true;
+        canvas.selection = false;
         canvas.lastPosX = evt.clientX;
         canvas.lastPosY = evt.clientY;
-        canvas.selection = false;
       }
     };
 
     const onMouseMove = (opt: any) => {
       if (!canvas.isDragging) return;
-      const evt = opt.e as MouseEvent;
+      const e = opt.e as MouseEvent;
       const vpt = canvas.viewportTransform!;
-      vpt[4] += evt.clientX - (canvas.lastPosX ?? evt.clientX);
-      vpt[5] += evt.clientY - (canvas.lastPosY ?? evt.clientY);
+      vpt[4] += e.clientX - (canvas.lastPosX || 0);
+      vpt[5] += e.clientY - (canvas.lastPosY || 0);
+      canvas.lastPosX = e.clientX;
+      canvas.lastPosY = e.clientY;
       canvas.requestRenderAll();
-      canvas.lastPosX = evt.clientX;
-      canvas.lastPosY = evt.clientY;
     };
 
     const onMouseUp = () => {
@@ -74,7 +84,7 @@ const FabricPdfCanvas: React.FC = () => {
     canvas.on("mouse:move", onMouseMove);
     canvas.on("mouse:up", onMouseUp);
 
-    // Cleanup
+    // Cleanup on unmount
     return () => {
       canvas.off("mouse:wheel", onWheel);
       canvas.off("mouse:down", onMouseDown);
@@ -85,86 +95,149 @@ const FabricPdfCanvas: React.FC = () => {
     };
   }, []);
 
+  // Handle PDF Upload
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
     const file = event.target.files?.[0];
-    if (!file) {
-      alert("No file selected!");
-      return;
-    }
-
-    if (file.type !== "application/pdf") {
-      alert("Invalid file type. Please upload a PDF.");
+    if (!file || file.type !== "application/pdf") {
+      alert("Please upload a valid PDF.");
       return;
     }
 
     try {
-      // Read the file as an ArrayBuffer
       const pdfData = await new Promise<ArrayBuffer>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = () => reject(new Error("Failed to read the PDF file"));
+        reader.onerror = () => reject(new Error("Failed to read file input"));
         reader.readAsArrayBuffer(file);
       });
 
-      // Load the PDF document
       const pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+
+      let pdfWidth = 0;
+      let pdfHeight = 0;
+
       for (let i = 1; i <= pdfDoc.numPages; i++) {
         const page = await pdfDoc.getPage(i);
         const viewport = page.getViewport({ scale: 1.5 });
 
-        // Render the PDF page on an offscreen canvas
         const pdfCanvas = document.createElement("canvas");
+        const context = pdfCanvas.getContext("2d")!;
         pdfCanvas.width = viewport.width;
         pdfCanvas.height = viewport.height;
-        const context = pdfCanvas.getContext("2d")!;
+
         await page.render({
           canvasContext: context,
           viewport,
-          canvas: pdfCanvas, // Attach the offscreen canvas
+          canvas: pdfCanvas,
         }).promise;
 
-        // Convert the canvas to a Data URL
         const dataUrl = pdfCanvas.toDataURL("image/png");
-
-        // Add the rendered page as an image on Fabric.js canvas
         const img = await FabricImage.fromURL(dataUrl);
-        img.set({ left: 50, top: i * 100 }); // Position each page
+        img.set({ left: 50, top: i * 100 });
         canvas.add(img);
+
+        pdfWidth = Math.max(pdfWidth, viewport.width);
+        pdfHeight += viewport.height;
       }
 
-      canvas.requestRenderAll(); // Re-render the Fabric.js canvas
-      console.log("PDF successfully rendered onto Fabric.js canvas!");
-      event.target.value = ""; // Reset input value
+      const scaleFactor = Math.min(canvas.width / pdfWidth, canvas.height / pdfHeight);
+      canvas.setZoom(scaleFactor / 2);
+
+      const vpt = canvas.viewportTransform!;
+      vpt[4] = (canvas.width - pdfWidth * scaleFactor) / 2;
+      vpt[5] = (canvas.height - pdfHeight * scaleFactor) / 2;
+      canvas.setViewportTransform(vpt);
+      canvas.requestRenderAll();
     } catch (error) {
-      console.error("Error processing the PDF:", error);
-      alert("Failed to process the PDF.");
+      console.error("Error processing the uploaded PDF:", error);
+      alert("Failed to process PDF.");
     }
+  };
+
+  // Handle image drag start
+  const handleDragStart = (event: React.DragEvent<HTMLImageElement>, imageSrc: string) => {
+    event.dataTransfer.setData("text/plain", imageSrc);
+  };
+
+  // Handle image drop onto canvas
+  const handleDrop = async (event: React.DragEvent<HTMLCanvasElement>) => {
+    const canvas = fabricCanvas.current;
+    if (!canvas) return;
+
+    const imageSrc = event.dataTransfer.getData("text/plain");
+    try {
+      const img = await FabricImage.fromURL(imageSrc);
+      img.set({ left: event.clientX, top: event.clientY, selectable: true });
+      canvas.add(img);
+
+      // Enable rotation on click
+      img.on("mousedown", () => {
+        img.rotate((img.angle || 0) + 90);
+        canvas.requestRenderAll();
+      });
+
+      canvas.requestRenderAll();
+    } catch (error) {
+      console.error("Error loading image:", error);
+    }
+
+    event.preventDefault();
+  };
+
+  // Allow drag-over
+  const handleDragOver = (event: React.DragEvent<HTMLCanvasElement>) => {
+    event.preventDefault();
   };
 
   return (
     <div>
-      <label>
-        Upload PDF
-        <input
-          type="file"
-          hidden
-          accept="application/pdf"
-          onChange={handlePdfUpload}
+      {/* PDF Upload Input */}
+      <div style={{ marginBottom: "20px" }}>
+        <input type="file" accept="application/pdf" onChange={handlePdfUpload} />
+      </div>
+
+      {/* Layout: Icons + Canvas */}
+      <div style={{ display: "flex" }}>
+        {/* Icons Panel */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            marginRight: "20px",
+          }}
+        >
+          {images.map((src, index) => (
+            <img
+              key={index}
+              src={src}
+              draggable
+              onDragStart={(event) => handleDragStart(event, src)}
+              style={{
+                width: "25px", // Updated size
+                height: "25px", // Updated size
+                cursor: "grab",
+                border: "1px solid rgba(0, 0, 0, 0.5)",
+                padding: "5px",
+              }}
+              alt={`Draggable Item ${index}`}
+            />
+          ))}
+        </div>
+
+        {/* Canvas */}
+        <canvas
+          ref={canvasRef}
+          style={{ border: "1px solid black", width: "1200px", height: "800px" }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
         />
-      </label>
-      <canvas
-        ref={canvasRef}
-        style={{
-          border: "1px solid black",
-          width: "1200px",
-          height: "800px",
-        }}
-      />
+      </div>
     </div>
   );
 };
 
-export default FabricPdfCanvas;
+export default CanvasComponent;
