@@ -37,7 +37,7 @@ const CanvasComponent: React.FC = () => {
 
     fabricCanvas.current = canvas;
 
-    // Enable zoom functionality
+    // Add zoom functionality
     const onWheel = (opt: any) => {
       const e = opt.e as WheelEvent;
       e.preventDefault();
@@ -53,7 +53,7 @@ const CanvasComponent: React.FC = () => {
 
     canvas.on("mouse:wheel", onWheel);
 
-    // Panning functionality
+    // Add panning functionality
     const onMouseDown = (opt: any) => {
       const evt = opt.e as MouseEvent;
       if (evt.altKey) {
@@ -194,20 +194,26 @@ const CanvasComponent: React.FC = () => {
 
   return (
     <div>
-      {/* PDF Upload Input */}
-      <div style={{ marginBottom: "20px" }}>
-        <input type="file" accept="application/pdf" onChange={handlePdfUpload} />
+      {/* Title and PDF Upload */}
+      <div style={{ marginBottom: "20px", display: "flex", alignItems: "center" }}>
+        <input
+          type="file"
+          accept="application/pdf"
+          onChange={handlePdfUpload}
+          style={{ marginRight: "10px", padding: "4px" }}
+        />
+        <h2 style={{ margin: "0" }}>Design Workspace</h2>
       </div>
 
-      {/* Layout: Icons + Canvas */}
+      {/* Layout: Icons and Canvas */}
       <div style={{ display: "flex" }}>
         {/* Icons Panel */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: "10px",
-            marginRight: "20px",
+            gap: "8px",
+            padding: "5px", // Compact padding for left-side icons
           }}
         >
           {images.map((src, index) => (
@@ -217,11 +223,11 @@ const CanvasComponent: React.FC = () => {
               draggable
               onDragStart={(event) => handleDragStart(event, src)}
               style={{
-                width: "25px", // Updated size
-                height: "25px", // Updated size
+                width: "25px",
+                height: "25px",
                 cursor: "grab",
                 border: "1px solid rgba(0, 0, 0, 0.5)",
-                padding: "5px",
+                borderRadius: "2px", // Slightly rounded icons
               }}
               alt={`Draggable Item ${index}`}
             />
@@ -231,7 +237,12 @@ const CanvasComponent: React.FC = () => {
         {/* Canvas */}
         <canvas
           ref={canvasRef}
-          style={{ border: "1px solid black", width: "1200px", height: "800px" }}
+          style={{
+            border: "1px solid black",
+            width: "100%",
+            maxWidth: "1200px",
+            height: "800px",
+          }}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         />
