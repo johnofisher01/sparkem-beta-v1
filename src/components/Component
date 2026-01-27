@@ -34,65 +34,11 @@ const CanvasComponent: React.FC = () => {
     "/images/fork2.png",
   ]);
 
-  // ✅ Keyboard controls:
-  // - Arrow Up/Down pans the viewport (moves "canvas view")
-  // - Delete / Backspace deletes the selected object
-  // - Space toggles pan override
+  // Track Space key (optional pan override)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        isSpaceDownRef.current = true;
-        return;
-      }
-
-      const canvas = fabricCanvas.current;
-      if (!canvas) return;
-
-      // Don't steal keys when typing in inputs
-      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
-      const isTyping =
-        tag === "input" || tag === "textarea" || (e.target as any)?.isContentEditable;
-      if (isTyping) return;
-
-      // Delete selected icon/object
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const active = canvas.getActiveObject();
-        if (active) {
-          canvas.remove(active);
-          canvas.discardActiveObject();
-          canvas.requestRenderAll();
-          e.preventDefault();
-        }
-        return;
-      }
-
-      // Pan with arrow keys (viewport movement)
-      const PAN_STEP = e.shiftKey ? 60 : 25; // Shift = faster
-      const vpt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
-
-      let didPan = false;
-
-      if (e.key === "ArrowUp") {
-        vpt[5] += PAN_STEP; // move view up (content goes down)
-        didPan = true;
-      } else if (e.key === "ArrowDown") {
-        vpt[5] -= PAN_STEP; // move view down (content goes up)
-        didPan = true;
-      } else if (e.key === "ArrowLeft") {
-        vpt[4] += PAN_STEP;
-        didPan = true;
-      } else if (e.key === "ArrowRight") {
-        vpt[4] -= PAN_STEP;
-        didPan = true;
-      }
-
-      if (didPan) {
-        canvas.setViewportTransform(vpt);
-        canvas.requestRenderAll();
-        e.preventDefault();
-      }
+      if (e.code === "Space") isSpaceDownRef.current = true;
     };
-
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") isSpaceDownRef.current = false;
     };
@@ -119,7 +65,7 @@ const CanvasComponent: React.FC = () => {
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
     fabricCanvas.current = canvas;
 
-    // Wheel zoom
+    // Wheel zoom (zoom to cursor)
     const handleZoom = (event: any) => {
       const e = event.e as WheelEvent;
       e.preventDefault();
@@ -133,7 +79,9 @@ const CanvasComponent: React.FC = () => {
       canvas.requestRenderAll();
     };
 
-    // Pan: drag empty space OR Space+drag anywhere
+    // ✅ Pan behavior:
+    // - Drag empty space to pan
+    // - OR hold Space and drag anywhere (even over an icon) to pan
     const handleMouseDown = (event: any) => {
       const clickedObject = !!event.target;
       const allowPan = !clickedObject || isSpaceDownRef.current;
@@ -166,7 +114,7 @@ const CanvasComponent: React.FC = () => {
       canvas.defaultCursor = "default";
     };
 
-    // Rotate icons on Shift+Click
+    // Rotate dropped icons on Shift+Click
     const handleRotateOnShiftClick = (event: any) => {
       const e = event.e as MouseEvent;
       if (!e.shiftKey) return;
@@ -184,7 +132,7 @@ const CanvasComponent: React.FC = () => {
     canvas.on("mouse:up", handleMouseUp);
     canvas.on("mouse:down", handleRotateOnShiftClick);
 
-    // Drag/drop on Fabric upper canvas
+    // ✅ Drag/drop must bind to Fabric's *upper* canvas
     const upper = canvas.upperCanvasEl;
 
     const onDragOver = (e: DragEvent) => {
@@ -199,17 +147,21 @@ const CanvasComponent: React.FC = () => {
       const src = e.dataTransfer?.getData("text/plain");
       if (!src) return;
 
+      // DOM coords relative to upper canvas
       const rect = upper.getBoundingClientRect();
       const domX = (e.clientX ?? 0) - rect.left;
       const domY = (e.clientY ?? 0) - rect.top;
 
+      // Convert DOM coords -> Fabric world coords (handles pan/zoom)
       const vpt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
       const inv = fabricUtil.invertTransform(vpt);
       const world = fabricUtil.transformPoint(new Point(domX, domY), inv);
 
-      const img = await FabricImage.fromURL(src, { crossOrigin: "anonymous" });
+      const img = await FabricImage.fromURL(src, {
+        crossOrigin: "anonymous",
+      });
 
-      // ✅ icon size (change here)
+      // ✅ Set a consistent dropped size
       const TARGET_WIDTH = 30;
       const scale = TARGET_WIDTH / (img.width || 1);
       img.scale(scale);
@@ -244,6 +196,7 @@ const CanvasComponent: React.FC = () => {
     };
   }, []);
 
+  // PDF Upload
   const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
@@ -272,7 +225,7 @@ const CanvasComponent: React.FC = () => {
         .render({
           canvasContext: ctx,
           viewport,
-          canvas: pdfCanvas,
+          canvas: pdfCanvas, // required by your typings
         } as any)
         .promise;
 
@@ -287,6 +240,7 @@ const CanvasComponent: React.FC = () => {
 
       canvas.backgroundImage = pdfImage;
 
+      // Center PDF and reset zoom/pan
       const dx = (canvas.getWidth() - viewport.width) / 2;
       const dy = (canvas.getHeight() - viewport.height) / 2;
       canvas.setViewportTransform([1, 0, 0, 1, dx, dy]);
@@ -298,6 +252,7 @@ const CanvasComponent: React.FC = () => {
     }
   };
 
+  // Sidebar drag start
   const handleDragStart = (
     event: React.DragEvent<HTMLImageElement>,
     src: string
@@ -316,8 +271,8 @@ const CanvasComponent: React.FC = () => {
           style={styles.uploadInput}
         />
         <label style={styles.uploadLabel}>
-          Drag background to pan (or Space+drag anywhere). Wheel zoom.
-          Arrow keys pan. Delete removes selected icon.
+          Drag background to pan (or hold Space to pan anywhere). Wheel to zoom.
+          Shift+Click icon to rotate.
         </label>
       </div>
 
@@ -335,6 +290,7 @@ const CanvasComponent: React.FC = () => {
           ))}
         </div>
 
+        {/* Important: no React onDrop here; Fabric overlays an upper canvas */}
         <canvas ref={canvasRef} style={styles.canvas} />
       </div>
     </div>
