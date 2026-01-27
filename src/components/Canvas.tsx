@@ -1,21 +1,25 @@
 import React, { useEffect, useRef } from "react";
 import { Canvas, FabricImage, Point } from "fabric";
+import * as pdfjsLib from "pdfjs-dist";
 
-// Extend Fabric.js Canvas type to include custom properties
+// Configure PDF.js to use the locally hosted worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
+
+// Extend Fabric.js Canvas type
 interface CustomFabricCanvas extends Canvas {
   isDragging?: boolean;
   lastPosX?: number;
   lastPosY?: number;
 }
 
-const FabricCanvasComponent: React.FC = () => {
+const FabricPdfCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvas = useRef<CustomFabricCanvas | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    // Initialize the Fabric.js canvas
+    // Initialize Fabric.js canvas
     const canvas = new Canvas(canvasRef.current, {
       width: 1200,
       height: 800,
@@ -24,24 +28,22 @@ const FabricCanvasComponent: React.FC = () => {
 
     fabricCanvas.current = canvas;
 
-    // Zoom with mouse wheel functionality
+    // Zoom functionality
     const onWheel = (opt: any) => {
       const e = opt.e as WheelEvent;
       e.preventDefault();
-      e.stopPropagation();
-
       const delta = e.deltaY;
       let zoom = canvas.getZoom();
       zoom *= 0.999 ** delta;
-      zoom = Math.max(0.5, Math.min(zoom, 3)); // Clamp between 0.5x and 3x zoom
+      zoom = Math.max(0.5, Math.min(zoom, 3)); // Clamp between 0.5x and 3x
 
-      const point = new Point(e.offsetX, e.offsetY);
+      const point = new Point(e.offsetX, e.offsetY); // Get pointer position relative to canvas
       canvas.zoomToPoint(point, zoom);
     };
 
     canvas.on("mouse:wheel", onWheel);
 
-    // Panning functionality (Alt + Mouse Drag)
+    // Panning with ALT + Drag
     const onMouseDown = (opt: any) => {
       const evt = opt.e as MouseEvent;
       if (evt.altKey) {
@@ -54,14 +56,10 @@ const FabricCanvasComponent: React.FC = () => {
 
     const onMouseMove = (opt: any) => {
       if (!canvas.isDragging) return;
-
       const evt = opt.e as MouseEvent;
-      const vpt = canvas.viewportTransform;
-      if (!vpt) return;
-
+      const vpt = canvas.viewportTransform!;
       vpt[4] += evt.clientX - (canvas.lastPosX ?? evt.clientX);
       vpt[5] += evt.clientY - (canvas.lastPosY ?? evt.clientY);
-
       canvas.requestRenderAll();
       canvas.lastPosX = evt.clientX;
       canvas.lastPosY = evt.clientY;
@@ -76,7 +74,7 @@ const FabricCanvasComponent: React.FC = () => {
     canvas.on("mouse:move", onMouseMove);
     canvas.on("mouse:up", onMouseUp);
 
-    // Cleanup on unmount
+    // Cleanup
     return () => {
       canvas.off("mouse:wheel", onWheel);
       canvas.off("mouse:down", onMouseDown);
@@ -87,8 +85,7 @@ const FabricCanvasComponent: React.FC = () => {
     };
   }, []);
 
-  // Handle File Upload and Add to Canvas
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
@@ -98,83 +95,70 @@ const FabricCanvasComponent: React.FC = () => {
       return;
     }
 
-    // Ensure file is an image
-    if (!file.type.startsWith("image/")) {
-      alert("The selected file is not an image!");
+    if (file.type !== "application/pdf") {
+      alert("Invalid file type. Please upload a PDF.");
       return;
     }
 
-    console.log("Selected file:", file.name, "Type:", file.type);
-
     try {
-      // Convert image file to Data URL
-      const imageSrc = await new Promise<string>((resolve, reject) => {
+      // Read the file as an ArrayBuffer
+      const pdfData = await new Promise<ArrayBuffer>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = () => reject(new Error("Failed to read the PDF file"));
+        reader.readAsArrayBuffer(file);
       });
 
-      // Load image onto Fabric.js canvas
-      const img = await FabricImage.fromURL(
-        imageSrc, // The image's Data URL
-        { crossOrigin: "anonymous" }, // Cross-origin handling
-        { left: 100, top: 100 } // Default position for loaded image
-      );
+      // Load the PDF document
+      const pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const page = await pdfDoc.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 });
 
-      canvas.add(img); // Add to canvas
-      canvas.requestRenderAll(); // Render canvas
+        // Render the PDF page on an offscreen canvas
+        const pdfCanvas = document.createElement("canvas");
+        pdfCanvas.width = viewport.width;
+        pdfCanvas.height = viewport.height;
+        const context = pdfCanvas.getContext("2d")!;
+        await page.render({
+          canvasContext: context,
+          viewport,
+          canvas: pdfCanvas, // Attach the offscreen canvas
+        }).promise;
 
-      // Allow re-uploading the same file
-      event.target.value = "";
+        // Convert the canvas to a Data URL
+        const dataUrl = pdfCanvas.toDataURL("image/png");
+
+        // Add the rendered page as an image on Fabric.js canvas
+        const img = await FabricImage.fromURL(dataUrl);
+        img.set({ left: 50, top: i * 100 }); // Position each page
+        canvas.add(img);
+      }
+
+      canvas.requestRenderAll(); // Re-render the Fabric.js canvas
+      console.log("PDF successfully rendered onto Fabric.js canvas!");
+      event.target.value = ""; // Reset input value
     } catch (error) {
-      console.error("Failed to upload the image:", error);
-      alert("Error uploading image. Please try again.");
+      console.error("Error processing the PDF:", error);
+      alert("Failed to process the PDF.");
     }
-  };
-
-  // Export the Fabric.js canvas as a PNG file
-  const exportCanvas = () => {
-    const canvas = fabricCanvas.current;
-    if (!canvas) return;
-
-    const dataURL = canvas.toDataURL({
-      format: "png", // PNG format
-      multiplier: 1, // Default scale
-    });
-
-    const link = document.createElement("a");
-    link.href = dataURL;
-    link.download = "design.png"; // File name for download
-    link.click();
   };
 
   return (
     <div>
-      {/* Toolbar */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <button onClick={exportCanvas}>Export as PNG</button>
-        <label style={{ cursor: "pointer" }}>
-          Upload Image
-          <input
-            type="file"
-            hidden
-            accept=".png,image/png" // Explicitly allow PNG files
-            onChange={handleUpload}
-          />
-        </label>
-        <div style={{ marginLeft: "auto", opacity: 0.75 }}>
-          Tip: Hold <b>Alt</b> + drag to pan, use the mouse wheel to zoom.
-        </div>
-      </div>
-
-      {/* Canvas Container */}
+      <label>
+        Upload PDF
+        <input
+          type="file"
+          hidden
+          accept="application/pdf"
+          onChange={handlePdfUpload}
+        />
+      </label>
       <canvas
         ref={canvasRef}
         style={{
           border: "1px solid black",
-          display: "block",
-          margin: "0 auto",
           width: "1200px",
           height: "800px",
         }}
@@ -183,4 +167,4 @@ const FabricCanvasComponent: React.FC = () => {
   );
 };
 
-export default FabricCanvasComponent;
+export default FabricPdfCanvas;
