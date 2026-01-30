@@ -71,10 +71,16 @@ const CanvasEditor: React.FC = () => {
   const [docName, setDocName] = useState("My Design");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [savedOpen, setSavedOpen] = useState(true);
+  const [savedOpen, setSavedOpen] = useState(false);
 
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Remove body margin/padding to eliminate white space
+  useEffect(() => {
+    document.body.style.margin = "0";
+    document.body.style.padding = "0";
+  }, []);
 
   useEffect(() => {
     persistSavedDocs(docs);
@@ -470,7 +476,13 @@ const CanvasEditor: React.FC = () => {
 };
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { width: "100%", minHeight: "100vh", background: "#fff" },
+  page: { 
+    width: "100%",
+    minHeight: "100vh", 
+    background: "#1e1e1e",
+    margin: 0,
+    padding: 0,
+  },
 
   topBar: {
     position: "sticky",
@@ -480,127 +492,153 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "10px 12px",
-    borderBottom: "1px solid rgba(0,0,0,0.08)",
-    background: "rgba(255,255,255,0.92)",
+    padding: "12px 16px",
+    borderBottom: "1px solid #3d3d3d",
+    background: "#2d2d2d",
     backdropFilter: "blur(8px)",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
   },
 
   left: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  title: { fontWeight: 800, fontSize: 14, color: "#222" },
+  title: { fontWeight: 700, fontSize: 13, color: "#e0e0e0", letterSpacing: 0.3 },
 
   input: {
-    height: 34,
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    padding: "0 10px",
+    height: 36,
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    padding: "0 12px",
     outline: "none",
-    fontSize: 14,
+    fontSize: 13,
     minWidth: 220,
+    background: "#3d3d3d",
+    color: "#e0e0e0",
+    transition: "all 0.2s ease",
   },
 
   actions: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
 
   btn: {
-    height: 34,
-    padding: "0 12px",
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    height: 36,
+    padding: "0 14px",
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#3d3d3d",
+    color: "#e0e0e0",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 600,
+    fontSize: 13,
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
   },
 
   btnPrimary: {
-    height: 34,
-    padding: "0 12px",
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "#0b5cff",
+    height: 36,
+    padding: "0 14px",
+    borderRadius: 6,
+    border: "1px solid #4d6a90",
+    background: "linear-gradient(180deg, #3d5a80 0%, #2c4766 100%)",
     color: "white",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 700,
+    fontSize: 13,
+    boxShadow: "0 2px 8px rgba(61,90,128,0.4)",
+    transition: "all 0.2s ease",
   },
 
-  body: { display: "flex", width: "100%" },
+  body: { 
+    display: "flex", 
+    width: "100%",
+    padding: 0,
+    margin: 0,
+    background: "#1e1e1e",
+  },
 
   sidebar: {
     width: 260,
     padding: 12,
-    borderRight: "1px solid rgba(0,0,0,0.08)",
-    background: "#fafafa",
+    borderRight: "1px solid #3d3d3d",
+    background: "#252525",
+    boxShadow: "2px 0 12px rgba(0,0,0,0.3)",
   },
 
   sidebarHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottom: "1px solid #3d3d3d",
   },
 
-  sidebarTitle: { fontWeight: 900, fontSize: 13 },
+  sidebarTitle: { fontWeight: 700, fontSize: 13, color: "#e0e0e0", letterSpacing: 0.3 },
 
   sidebarHideBtn: {
     width: 32,
     height: 30,
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#2d2d2d",
+    color: "#e0e0e0",
     cursor: "pointer",
-    fontWeight: 900,
+    fontWeight: 700,
+    transition: "all 0.2s ease",
   },
 
-  empty: { color: "#666", fontSize: 13 },
+  empty: { color: "#888", fontSize: 12, padding: "20px 0" },
 
   card: {
-    background: "white",
-    border: "1px solid rgba(0,0,0,0.08)",
-    borderRadius: 12,
-    padding: 10,
+    background: "#2d2d2d",
+    border: "1px solid #3d3d3d",
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 10,
-    boxShadow: "0 8px 18px rgba(0,0,0,0.06)",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+    transition: "all 0.2s ease",
   },
 
-  cardTop: { display: "flex", flexDirection: "column", gap: 4 },
-  cardName: { fontWeight: 900, fontSize: 13 },
-  cardDate: { fontSize: 12, color: "#666" },
+  cardTop: { display: "flex", flexDirection: "column", gap: 6 },
+  cardName: { fontWeight: 700, fontSize: 13, color: "#e0e0e0" },
+  cardDate: { fontSize: 11, color: "#888" },
 
   cardBtns: { display: "flex", gap: 8, marginTop: 10 },
 
   smallBtn: {
-    height: 30,
-    padding: "0 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    height: 32,
+    padding: "0 12px",
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#3d3d3d",
+    color: "#e0e0e0",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 700,
     fontSize: 12,
+    transition: "all 0.2s ease",
   },
 
   smallBtnDanger: {
-    height: 30,
-    padding: "0 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    height: 32,
+    padding: "0 12px",
+    borderRadius: 6,
+    border: "1px solid #8d4d4d",
+    background: "#3d2d2d",
+    color: "#ff6b6b",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 700,
     fontSize: 12,
-    color: "#b00020",
+    transition: "all 0.2s ease",
   },
 
-  canvasArea: { flex: 1, minWidth: 0 },
+  canvasArea: { flex: 1, minWidth: 0, background: "#1e1e1e" },
 
   menu: {
     position: "absolute",
     right: 0,
     top: "calc(100% + 8px)",
     width: 200,
-    background: "white",
-    border: "1px solid rgba(0,0,0,0.12)",
-    borderRadius: 12,
-    boxShadow: "0 14px 30px rgba(0,0,0,0.14)",
+    background: "#2d2d2d",
+    border: "1px solid #4d4d4d",
+    borderRadius: 8,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
     padding: 6,
     zIndex: 999,
   },
@@ -608,18 +646,21 @@ const styles: Record<string, React.CSSProperties> = {
   menuItem: {
     width: "100%",
     textAlign: "left",
-    padding: "10px 10px",
-    borderRadius: 10,
+    padding: "10px 12px",
+    borderRadius: 6,
     border: "none",
     background: "transparent",
+    color: "#e0e0e0",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 600,
+    fontSize: 13,
+    transition: "all 0.2s ease",
   },
 
   menuDivider: {
     height: 1,
-    background: "rgba(0,0,0,0.08)",
-    margin: "6px 6px",
+    background: "#3d3d3d",
+    margin: "6px 0",
   },
 };
 

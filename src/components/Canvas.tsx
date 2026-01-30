@@ -29,8 +29,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.j
 const clamp = (v: number, min: number, max: number) =>
   Math.max(min, Math.min(max, v));
 
-const CANVAS_W = 1200;
-const CANVAS_H = 800;
+const CANVAS_W = 1000;
+const CANVAS_H = 700;
 
 // --------- A3 PAGE (world space) ----------
 const DPI = 150; // change if you want (96 / 150 / 300)
@@ -129,7 +129,7 @@ const CanvasComponent: React.FC = () => {
   );
 
   /**
-   * ✅ Fit viewport to show A3 page nicely
+   * ✅ Fit viewport to show A3 page centered with gray space all around
    * IMPORTANT: Nav button must NOT affect canvas.
    * So we DO NOT vary padding based on toolbarVisible.
    */
@@ -137,16 +137,17 @@ const CanvasComponent: React.FC = () => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
-    const paddingLeft = 20;
-    const paddingTop = 20;
-    const paddingBottom = 20;
-    const paddingRight = 20; // ✅ constant: Nav toggle won't change fit
+    const paddingLeft = 30;
+    const paddingTop = 30;
+    const paddingBottom = 30;
+    const paddingRight = 30;
 
     const cw = canvas.getWidth() - paddingLeft - paddingRight;
     const ch = canvas.getHeight() - paddingTop - paddingBottom;
 
     const s = clamp(Math.min(cw / A3_W_PX, ch / A3_H_PX), MIN_ZOOM, MAX_ZOOM);
 
+    // Center the page horizontally and vertically
     const dx = paddingLeft + (cw - A3_W_PX * s) / 2;
     const dy = paddingTop + (ch - A3_H_PX * s) / 2;
 
@@ -705,91 +706,127 @@ const CanvasComponent: React.FC = () => {
 };
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { width: "100%", maxWidth: "100vw", overflowX: "hidden" },
+  page: { 
+    width: "100%",
+    overflowX: "hidden",
+    margin: 0,
+    padding: 0,
+    background: "#1e1e1e",
+  },
 
-  uploadSection: { marginBottom: 12, textAlign: "center" },
+  uploadSection: { 
+    marginBottom: 16, 
+    textAlign: "center",
+    padding: "16px 0",
+    background: "#2d2d2d",
+    borderBottom: "1px solid #3d3d3d",
+  },
   uploadInput: {
-    padding: 10,
-    borderRadius: 8,
-    border: "1px solid rgba(0,0,0,0.2)",
-    background: "white",
+    padding: "10px 16px",
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#3d3d3d",
+    color: "#e0e0e0",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
   },
   uploadLabel: {
-    fontSize: 13,
-    color: "#555",
+    fontSize: 12,
+    color: "#a0a0a0",
     display: "block",
-    marginTop: 8,
+    marginTop: 10,
+    fontWeight: 400,
+    letterSpacing: 0.3,
   },
 
   workspace: {
     display: "flex",
     flexDirection: "row",
-    gap: 8,
+    gap: 0,
     alignItems: "flex-start",
     width: "100%",
+    padding: 0,
+    margin: 0,
+    background: "#1e1e1e",
   },
 
   iconsContainer: {
-    width: 86,
-    padding: 8,
-    borderRight: "1px solid #e0e0e0",
+    width: 72,
+    padding: "16px 8px",
+    background: "#252525",
+    borderRight: "1px solid #3d3d3d",
     display: "flex",
     flexDirection: "column",
-    gap: 10,
+    gap: 12,
     alignItems: "center",
     flexShrink: 0,
+    boxShadow: "2px 0 8px rgba(0,0,0,0.3)",
   },
 
   navToggleBtn: {
-    height: 40,
+    height: 44,
     width: "100%",
-    borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.18)",
+    borderRadius: 8,
+    border: "1px solid #4d4d4d",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 700,
+    fontSize: 11,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    padding: "0 10px",
-    boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+    gap: 8,
+    padding: "0 8px",
+    boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+    transition: "all 0.2s ease",
+    background: "#2d2d2d",
+    color: "#e0e0e0",
   },
   navToggleBtnOn: {
-    background: "linear-gradient(180deg, #ffffff 0%, #f1f7ff 100%)",
+    background: "linear-gradient(180deg, #3d5a80 0%, #2c4766 100%)",
+    borderColor: "#4d6a90",
+    color: "#ffffff",
   },
   navToggleBtnOff: {
-    background: "linear-gradient(180deg, #ffffff 0%, #f7f7f7 100%)",
-    opacity: 0.85,
+    background: "#2d2d2d",
+    opacity: 0.8,
   },
   navDot: {
-    width: 10,
-    height: 10,
+    width: 8,
+    height: 8,
     borderRadius: 999,
-    background: "#2f7cf6",
-    boxShadow: "0 0 0 3px rgba(47,124,246,0.15)",
+    background: "#5fa3ff",
+    boxShadow: "0 0 0 2px rgba(95,163,255,0.2)",
   },
-  navToggleText: { fontSize: 13, letterSpacing: 0.2 },
+  navToggleText: { fontSize: 11, letterSpacing: 0.5, fontWeight: 700 },
 
   icon: {
-    width: 46,
-    height: 46,
-    cursor: "grab",
-    border: "1px solid #ccc",
-    borderRadius: 12,
-    padding: 6,
-    background: "white",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+    width: 52,
+    height: 52,
+    cursor: "pointer",
+    border: "1px solid #4d4d4d",
+    borderRadius: 8,
+    padding: 8,
+    background: "#3d3d3d",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+    transition: "all 0.2s ease",
+    filter: "brightness(1.4) contrast(1.2)", // Make icons much lighter and more visible
   },
 
-  canvasWrap: { position: "relative", flex: 1, minWidth: 0 },
+  canvasWrap: { 
+    position: "relative", 
+    width: "100%",
+    margin: 0,
+  },
 
   fabricHost: {
     width: "100%",
-    height: CANVAS_H,
-    border: "1px solid #999",
-    borderRadius: 12,
+    height: 700,
+    border: "1px solid #3d3d3d",
+    borderRadius: 0,
     overflow: "hidden",
-    background: "#e9e9e9",
+    background: "#2a2a2a",
+    boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
   },
 
   overlay: { position: "absolute", inset: 0, pointerEvents: "none" },
@@ -798,18 +835,18 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: "auto",
     position: "absolute",
     zIndex: 10,
-    width: 170,
-    padding: 10,
-    borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.15)",
-    background: "rgba(255,255,255,0.92)",
-    boxShadow: "0 8px 22px rgba(0,0,0,0.14)",
+    width: 180,
+    padding: 12,
+    borderRadius: 8,
+    border: "1px solid #4d4d4d",
+    background: "rgba(45,45,45,0.98)",
+    boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 10,
     userSelect: "none",
     cursor: "grab",
-    backdropFilter: "blur(6px)",
+    backdropFilter: "blur(12px)",
   },
 
   toolbarHeader: {
@@ -817,18 +854,38 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
+    paddingBottom: 8,
+    borderBottom: "1px solid #3d3d3d",
   },
-  toolbarTitleRow: { display: "flex", flexDirection: "column", lineHeight: 1.1 },
-  toolbarTitle: { fontSize: 12, fontWeight: 800, color: "#222" },
-  toolbarSub: { fontSize: 11, color: "#666", fontWeight: 600 },
+  toolbarTitleRow: { 
+    display: "flex", 
+    flexDirection: "column", 
+    lineHeight: 1.2,
+  },
+  toolbarTitle: { 
+    fontSize: 13, 
+    fontWeight: 700, 
+    color: "#e0e0e0",
+    letterSpacing: 0.3,
+  },
+  toolbarSub: { 
+    fontSize: 10, 
+    color: "#888", 
+    fontWeight: 500,
+    letterSpacing: 0.3,
+  },
 
   closeBtn: {
-    width: 34,
-    height: 30,
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    width: 32,
+    height: 28,
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#2d2d2d",
+    color: "#e0e0e0",
     cursor: "pointer",
+    fontSize: 14,
+    fontWeight: 600,
+    transition: "all 0.2s ease",
   },
 
   midRow: {
@@ -837,26 +894,38 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: 8,
   },
-  zoomCol: { display: "flex", flexDirection: "column", gap: 6 },
+  zoomCol: { 
+    display: "flex", 
+    flexDirection: "column", 
+    gap: 6,
+  },
 
   btn: {
-    width: 44,
-    height: 36,
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    width: 48,
+    height: 38,
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#3d3d3d",
+    color: "#e0e0e0",
     cursor: "pointer",
     fontSize: 14,
+    fontWeight: 600,
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
   },
   btnSmall: {
-    width: 44,
-    height: 30,
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "white",
+    width: 48,
+    height: 32,
+    borderRadius: 6,
+    border: "1px solid #4d4d4d",
+    background: "#3d3d3d",
+    color: "#e0e0e0",
     cursor: "pointer",
-    fontSize: 12,
-    fontWeight: 800,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.5,
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
   },
 };
 
