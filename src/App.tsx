@@ -1,11 +1,11 @@
 import React from "react";
-import { AppBar, Toolbar, Typography, Container } from "@mui/material";
-import CanvasEditor from "./components/CanvasEditor"; // ✅ NEW wrapper with save/load/print
+import { AppBar, Toolbar, Typography } from "@mui/material";
+import CanvasEditor from "./components/CanvasEditor";
 
 function App() {
   return (
     <>
-      {/* Professional Header */}
+      {/* Header */}
       <AppBar position="static" style={{ backgroundColor: "#002d62" }}>
         <Toolbar>
           <Typography
@@ -17,11 +17,10 @@ function App() {
         </Toolbar>
       </AppBar>
 
-      {/* Main Content */}
-      <Container style={{ marginTop: 20, maxWidth: "xl" as any }}>
-        {/* ✅ Canvas Editor (includes toolbar + save/load/print) */}
+      {/* ✅ No Container wrapper - canvas measures full viewport width correctly */}
+      <div style={{ width: "100%", margin: 0, padding: 0 }}>
         <CanvasEditor />
-      </Container>
+      </div>
     </>
   );
 }
